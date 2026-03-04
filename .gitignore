@@ -1,0 +1,33 @@
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Reports (generated)
+report.html
+report.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (keep samples, ignore real data)
+*.csv
+!sample_*.csv
