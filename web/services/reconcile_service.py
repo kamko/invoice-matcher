@@ -265,11 +265,15 @@ class ReconcileService:
             invoices = []
             if invoice_dir and invoice_dir.exists():
                 invoices = parse_invoices(invoice_dir)
+                print(f"[RECONCILE] Parsed {len(invoices)} invoices from current month: {invoice_dir}")
 
             # Also include previous month's invoices (for late payments)
             if prev_month_invoice_dir and prev_month_invoice_dir.exists():
                 prev_invoices = parse_invoices(prev_month_invoice_dir)
+                print(f"[RECONCILE] Parsed {len(prev_invoices)} invoices from prev month: {prev_month_invoice_dir}")
                 invoices.extend(prev_invoices)
+
+            print(f"[RECONCILE] Total invoices: {len(invoices)}, transactions: {len(transactions)}")
 
             # Separate by type: fees, income, known, unknown
             fee_transactions = []

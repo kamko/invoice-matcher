@@ -1,12 +1,24 @@
 import * as React from "react"
 import { Link } from "wouter"
 import { ArrowLeft, Loader2, RefreshCw } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useSyncMonth, type Transaction } from "@/api/client"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, type Transaction } from "@/api/client"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { SummaryCards } from "@/components/report/SummaryCards"
+import { MatchedTable, UnmatchedTable, KnownTable, FeesTable, IncomeTable } from "@/components/report/TransactionTable"
+import { MarkKnownModal, type MarkKnownData } from "@/components/report/MarkKnownModal"
+import { UploadPdfModal } from "@/components/report/UploadPdfModal"
+import { useSync } from "@/context/SyncContext"
 
-// Helper to get folder ID for a month from localStorage
-function getMonthFolder(yearMonth: string): string {
+interface MonthFolderInfo {
+  id: string
+  name: string
+}
+
+// Helper to get folder info for a month from localStorage
+function getMonthFolder(yearMonth: string): MonthFolderInfo | null {
   const folders = JSON.parse(localStorage.getItem("month_folders") || "{}")
-  return folders[yearMonth] || ""
+  return folders[yearMonth] || null
 }
 
 // Calculate previous month
@@ -15,26 +27,20 @@ function getPrevMonth(ym: string): string {
   const prevDate = new Date(year, mon - 2, 1)
   return `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`
 }
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Button } from "@/components/ui/button"
-import { SummaryCards } from "@/components/report/SummaryCards"
-import { MatchedTable, UnmatchedTable, KnownTable, FeesTable, IncomeTable } from "@/components/report/TransactionTable"
-import { MarkKnownModal, type MarkKnownData } from "@/components/report/MarkKnownModal"
-import { UploadPdfModal } from "@/components/report/UploadPdfModal"
 
 interface MonthReportPageProps {
   yearMonth: string
 }
 
 export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
-  const { data: month, isLoading, error } = useMonth(yearMonth)
+  const { data: month, isLoading, error, refetch } = useMonth(yearMonth)
   const markKnown = useMarkKnownMonthly()
   const matchWithPdf = useMatchWithPdfMonthly()
-  const syncMonth = useSyncMonth()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
   const [uploadPdfTransaction, setUploadPdfTransaction] = React.useState<Transaction | null>(null)
+  const { startSync } = useSync()
 
   // Format year-month for display
   const formatYearMonth = (ym: string) => {
@@ -59,25 +65,21 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   }
 
   const handleResync = () => {
-    // Get stored token from localStorage
     const fioToken = localStorage.getItem("fio_token")
-
     if (!fioToken) {
       alert("Fio token not found. Please configure it in Settings.")
       return
     }
 
-    // Get folder for this month and previous month
     const folderForMonth = getMonthFolder(yearMonth)
-    const prevMonth = getPrevMonth(yearMonth)
-    const prevMonthFolder = getMonthFolder(prevMonth)
+    const prevMonthFolder = getMonthFolder(getPrevMonth(yearMonth))
 
-    syncMonth.mutate({
+    startSync({
       yearMonth,
-      year_month: yearMonth,
-      fio_token: fioToken,
-      gdrive_folder_id: folderForMonth || undefined,
-      prev_month_gdrive_folder_id: prevMonthFolder || undefined,
+      fioToken,
+      gdriveFolderId: folderForMonth?.id,
+      prevMonthGdriveFolderId: prevMonthFolder?.id,
+      onComplete: () => refetch(),
     })
   }
 
@@ -144,13 +146,8 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         <Button
           variant="outline"
           onClick={handleResync}
-          disabled={syncMonth.isPending}
         >
-          {syncMonth.isPending ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
+          <RefreshCw className="h-4 w-4 mr-2" />
           Re-sync
         </Button>
       </div>

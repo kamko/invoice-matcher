@@ -435,6 +435,8 @@ def sync_month(
     db: Session = Depends(get_db)
 ):
     """Sync reconciliation for a specific month."""
+    print(f"[SYNC] {year_month}: folder={request.gdrive_folder_id}, prev_folder={request.prev_month_gdrive_folder_id}")
+
     # Validate year_month format
     import re
     if not re.match(r"^\d{4}-\d{2}$", year_month):
@@ -477,11 +479,14 @@ def sync_month(
     elif request.prev_month_gdrive_folder_id:
         if _gdrive_service.is_available and _gdrive_service._credentials:
             try:
-                prev_month_invoice_dir, _ = _gdrive_service.download_pdfs(
+                prev_month_invoice_dir, prev_files = _gdrive_service.download_pdfs(
                     request.prev_month_gdrive_folder_id
                 )
-            except Exception:
-                pass  # Silently ignore errors for previous month
+                print(f"[SYNC] Downloaded {len(prev_files)} files from prev month folder")
+            except Exception as e:
+                print(f"[SYNC] Failed to download prev month: {e}")
+
+    print(f"[SYNC] invoice_dir={invoice_dir}, prev_month_invoice_dir={prev_month_invoice_dir}")
 
     # Run reconciliation in background
     from web.database.connection import DATABASE_URL

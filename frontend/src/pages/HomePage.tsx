@@ -1,13 +1,14 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
-import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen } from "lucide-react"
-import { useMonths, useSyncMonth, useGDriveStatus } from "@/api/client"
+import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink } from "lucide-react"
+import { useMonths, useGDriveStatus, useGDriveAuthUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { FolderPickerDialog } from "@/components/FolderPickerDialog"
+import { useSync } from "@/context/SyncContext"
 
 interface MonthFolderInfo {
   id: string
@@ -29,9 +30,29 @@ function setMonthFolder(yearMonth: string, folderId: string, folderName: string)
 
 export function HomePage() {
   const [, setLocation] = useLocation()
-  const { data: months, isLoading } = useMonths()
-  const { data: gdriveStatus } = useGDriveStatus()
-  const syncMonth = useSyncMonth()
+  const { data: months, isLoading, refetch: refetchMonths } = useMonths()
+  const { data: gdriveStatus, refetch: refetchGdriveStatus } = useGDriveStatus()
+  const getAuthUrl = useGDriveAuthUrl()
+
+  // Listen for OAuth popup message
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "gdrive-connected") {
+        refetchGdriveStatus()
+      }
+    }
+    window.addEventListener("message", handleMessage)
+    return () => window.removeEventListener("message", handleMessage)
+  }, [refetchGdriveStatus])
+
+  const handleGDriveConnect = async () => {
+    try {
+      const result = await getAuthUrl.mutateAsync()
+      window.open(result.auth_url, "_blank", "width=600,height=700")
+    } catch (error) {
+      console.error("Failed to get auth URL:", error)
+    }
+  }
 
   const [fioToken, setFioToken] = React.useState(() => localStorage.getItem("fio_token") || "")
   const [showSettings, setShowSettings] = React.useState(false)
@@ -42,6 +63,7 @@ export function HomePage() {
   })
   const [selectedFolder, setSelectedFolder] = React.useState<MonthFolderInfo | null>(() => getMonthFolder(selectedMonth))
   const [showFolderPicker, setShowFolderPicker] = React.useState(false)
+  const { startSync } = useSync()
 
   // Update folder when month changes
   React.useEffect(() => {
@@ -88,22 +110,19 @@ export function HomePage() {
       return
     }
 
-    // Get folder for this specific month
     const folderForMonth = getMonthFolder(yearMonth)
-    // Get folder for previous month (for late payments)
     const prevMonth = getPrevMonth(yearMonth)
     const prevMonthFolder = getMonthFolder(prevMonth)
 
-    syncMonth.mutate({
+    startSync({
       yearMonth,
-      year_month: yearMonth,
-      fio_token: fioToken,
-      gdrive_folder_id: folderForMonth?.id || undefined,
-      prev_month_gdrive_folder_id: prevMonthFolder?.id || undefined,
-    }, {
-      onSuccess: () => {
+      fioToken,
+      gdriveFolderId: folderForMonth?.id,
+      prevMonthGdriveFolderId: prevMonthFolder?.id,
+      onComplete: () => {
+        refetchMonths()
         setLocation(`/month/${yearMonth}`)
-      }
+      },
     })
   }
 
@@ -144,18 +163,31 @@ export function HomePage() {
               </p>
             </div>
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                GDrive Status: {gdriveStatus?.authenticated ? (
-                  <span className="text-green-600">Connected</span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Google Drive:</span>
+                {gdriveStatus?.authenticated ? (
+                  <span className="text-sm text-green-600">Connected</span>
                 ) : (
                   <>
-                    <span className="text-amber-600">Not connected</span>
+                    <span className="text-sm text-amber-600">Not connected</span>
                     {gdriveStatus?.available && (
-                      <> - <Link href="/wizard" className="underline">Connect</Link></>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGDriveConnect}
+                        disabled={getAuthUrl.isPending}
+                      >
+                        {getAuthUrl.isPending ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                        )}
+                        Connect
+                      </Button>
                     )}
                   </>
                 )}
-              </p>
+              </div>
             </div>
             <Button onClick={handleSaveSettings}>Save Settings</Button>
           </CardContent>
@@ -221,13 +253,9 @@ export function HomePage() {
           <div className="flex justify-end">
             <Button
               onClick={() => handleSync(selectedMonth)}
-              disabled={!hasToken || syncMonth.isPending}
+              disabled={!hasToken}
             >
-              {syncMonth.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
-              )}
+              <RefreshCw className="h-4 w-4 mr-2" />
               Sync {formatYearMonth(selectedMonth)}
             </Button>
           </div>

@@ -1,7 +1,5 @@
 import { Route, Switch, Link, useLocation } from 'wouter'
 import { HomePage } from './pages/HomePage'
-import { WizardPage } from './pages/WizardPage'
-import { ReportPage } from './pages/ReportPage'
 import { MonthReportPage } from './pages/MonthReportPage'
 import { RulesPage } from './pages/RulesPage'
 import { cn } from './lib/utils'
@@ -37,7 +35,6 @@ function App() {
             </Link>
             <nav className="flex items-center gap-2">
               <NavLink href="/">Home</NavLink>
-              <NavLink href="/wizard">Wizard</NavLink>
               <NavLink href="/rules">Rules</NavLink>
             </nav>
           </div>
@@ -47,12 +44,8 @@ function App() {
       <main className="container py-6">
         <Switch>
           <Route path="/" component={HomePage} />
-          <Route path="/wizard" component={WizardPage} />
           <Route path="/month/:yearMonth">
             {(params) => <MonthReportPage yearMonth={params.yearMonth} />}
-          </Route>
-          <Route path="/report/:sessionId">
-            {(params) => <ReportPage sessionId={params.sessionId} />}
           </Route>
           <Route path="/rules" component={RulesPage} />
           <Route>
