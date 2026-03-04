@@ -28,6 +28,7 @@ class TransactionResponse(BaseModel):
     vs: Optional[str] = None
     note: Optional[str] = None
     transaction_type: str
+    rule_reason: Optional[str] = None  # For known transactions
 
 
 class MatchResultResponse(BaseModel):
@@ -150,3 +151,4 @@ class MatchWithPdfResponse(BaseModel):
     message: str
     gdrive_file_id: Optional[str] = None
     invoice: Optional[Dict[str, Any]] = None
+    warning: Optional[str] = None  # Set when force=true was used with amount mismatch

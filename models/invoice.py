@@ -16,6 +16,7 @@ class Invoice:
     vendor: str
     amount: Optional[Decimal] = None
     vs: Optional[str] = None  # Variable Symbol extracted from PDF
+    gdrive_file_id: Optional[str] = None  # Google Drive file ID
 
     @property
     def filename(self) -> str:

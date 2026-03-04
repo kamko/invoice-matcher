@@ -5,7 +5,7 @@ import secrets
 import hashlib
 import base64
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from web.config import settings, DATA_DIR
 from web.schemas.gdrive import GDriveFolder
@@ -180,8 +180,12 @@ class GDriveService:
         folders.sort(key=lambda f: f.name.lower())
         return folders
 
-    def download_pdfs(self, folder_id: str) -> Tuple[Path, List[str]]:
-        """Download all PDFs from a folder."""
+    def download_pdfs(self, folder_id: str) -> Tuple[Path, List[str], Dict[str, str]]:
+        """Download all PDFs from a folder.
+
+        Returns:
+            Tuple of (directory_path, list_of_filenames, dict_mapping_filename_to_file_id)
+        """
         if not GDRIVE_AVAILABLE:
             raise RuntimeError("Google Drive libraries not installed")
 
@@ -204,6 +208,7 @@ class GDriveService:
         ).execute()
 
         downloaded_files = []
+        file_id_map = {}  # filename -> gdrive file id
 
         for item in results.get("files", []):
             file_id = item["id"]
@@ -220,8 +225,9 @@ class GDriveService:
                     _, done = downloader.next_chunk()
 
             downloaded_files.append(file_name)
+            file_id_map[file_name] = file_id
 
-        return session_dir, downloaded_files
+        return session_dir, downloaded_files, file_id_map
 
     def list_files_in_folder(self, folder_id: str) -> List[str]:
         """List all file names in a folder."""

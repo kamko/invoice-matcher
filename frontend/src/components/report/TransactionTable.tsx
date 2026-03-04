@@ -1,4 +1,4 @@
-import { Upload } from "lucide-react"
+import { Upload, ExternalLink } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -47,7 +47,19 @@ export function MatchedTable({ matches }: MatchedTableProps) {
                 {match.transaction.counter_name || match.transaction.counter_account}
               </TableCell>
               <TableCell className="max-w-[200px] truncate">
-                {match.invoice?.filename || "-"}
+                {match.invoice?.gdrive_file_id ? (
+                  <a
+                    href={`https://drive.google.com/file/d/${match.invoice.gdrive_file_id}/view`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-blue-600 hover:underline"
+                  >
+                    {match.invoice.filename}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  match.invoice?.filename || "-"
+                )}
               </TableCell>
               <TableCell>
                 <span className="font-mono">{match.confidence_pct}%</span>
@@ -158,13 +170,14 @@ export function KnownTable({ transactions }: KnownTableProps) {
           <TableHead>Date</TableHead>
           <TableHead>Amount</TableHead>
           <TableHead>Counter Party</TableHead>
-          <TableHead>Reason</TableHead>
+          <TableHead>Note</TableHead>
+          <TableHead>Rule/Reason</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {transactions.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={4} className="text-center text-muted-foreground">
+            <TableCell colSpan={5} className="text-center text-muted-foreground">
               No known transactions
             </TableCell>
           </TableRow>
@@ -175,10 +188,13 @@ export function KnownTable({ transactions }: KnownTableProps) {
               <TableCell className="font-mono">
                 {formatCurrency(t.amount, t.currency)}
               </TableCell>
-              <TableCell className="max-w-[200px] truncate">
+              <TableCell className="max-w-[150px] truncate" title={t.counter_name || t.counter_account || ""}>
                 {t.counter_name || t.counter_account}
               </TableCell>
-              <TableCell>{t.rule_reason || "-"}</TableCell>
+              <TableCell className="max-w-[200px] truncate" title={t.note || ""}>
+                {t.note || "-"}
+              </TableCell>
+              <TableCell className="text-muted-foreground">{t.rule_reason || "-"}</TableCell>
             </TableRow>
           ))
         )}

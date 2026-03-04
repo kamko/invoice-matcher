@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -625,9 +626,13 @@ async def match_with_pdf_monthly(
     year_month: str,
     transaction_id: str = Form(...),
     file: UploadFile = File(...),
+    force: bool = Form(False),
     db: Session = Depends(get_db)
 ):
-    """Match an unmatched transaction with an uploaded PDF invoice for a month."""
+    """Match an unmatched transaction with an uploaded PDF invoice for a month.
+
+    If invoice amount doesn't match transaction amount, returns error unless force=true.
+    """
     reconcile_service = ReconcileService(db)
     month = reconcile_service.get_month(year_month)
 
@@ -660,6 +665,22 @@ async def match_with_pdf_monthly(
         invoice = parse_uploaded_pdf(tmp_path)
         if not invoice:
             raise HTTPException(status_code=400, detail="Could not extract data from PDF.")
+
+        # Validate amount match
+        amount_warning = None
+        if invoice.amount is not None:
+            transaction_amount = abs(Decimal(str(transaction_data.get("amount", 0))))
+            invoice_amount = abs(invoice.amount)
+            # Allow 5 cent tolerance
+            if abs(transaction_amount - invoice_amount) > Decimal("0.05"):
+                if not force:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Amount mismatch: invoice shows {invoice_amount} EUR but transaction is {transaction_amount} EUR. "
+                               f"Upload the correct file or confirm to force match."
+                    )
+                else:
+                    amount_warning = f"Forced match with amount mismatch: invoice {invoice_amount} EUR vs transaction {transaction_amount} EUR"
 
         invoice_date_str = str(invoice.invoice_date) if invoice.invoice_date else "unknown"
         vendor_slug = (invoice.vendor or "unknown").lower().replace(" ", "-")[:20]
@@ -737,6 +758,7 @@ async def match_with_pdf_monthly(
             message="Transaction matched with uploaded invoice",
             gdrive_file_id=gdrive_file_id,
             invoice=invoice_data,
+            warning=amount_warning,
         )
 
     finally:

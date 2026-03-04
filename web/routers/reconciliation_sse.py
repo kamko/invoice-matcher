@@ -309,6 +309,7 @@ def serialize_invoice(inv) -> dict:
         "vendor": inv.vendor,
         "amount": str(inv.amount) if inv.amount else None,
         "vs": inv.vs,
+        "gdrive_file_id": inv.gdrive_file_id,
     }
 
 
@@ -392,6 +393,7 @@ async def monthly_reconcile_stream(
 
             # Step 2: Get invoices from current month folder
             invoices = []
+            file_id_map = {}  # filename -> gdrive file id
 
             if request.gdrive_folder_id:
                 yield send_event("progress", {"step": "downloading", "message": "Downloading invoices from Google Drive..."})
@@ -399,10 +401,11 @@ async def monthly_reconcile_stream(
 
                 if _gdrive_service._credentials:
                     try:
-                        invoice_dir, files = await asyncio.to_thread(
+                        invoice_dir, files, curr_file_id_map = await asyncio.to_thread(
                             _gdrive_service.download_pdfs,
                             request.gdrive_folder_id
                         )
+                        file_id_map.update(curr_file_id_map)
                         yield send_event("progress", {
                             "step": "downloaded",
                             "message": f"Downloaded {len(files)} PDF files",
@@ -412,6 +415,9 @@ async def monthly_reconcile_stream(
                         # Parse current month invoices
                         if invoice_dir:
                             curr_invoices = await asyncio.to_thread(parse_invoices, invoice_dir)
+                            # Set gdrive_file_id on each invoice
+                            for inv in curr_invoices:
+                                inv.gdrive_file_id = file_id_map.get(inv.filename)
                             invoices.extend(curr_invoices)
                     except Exception as e:
                         yield send_event("progress", {"step": "download_warning", "message": f"Warning: {sanitize_error(e)}"})
@@ -429,12 +435,16 @@ async def monthly_reconcile_stream(
 
                 if _gdrive_service._credentials:
                     try:
-                        prev_invoice_dir, prev_files = await asyncio.to_thread(
+                        prev_invoice_dir, prev_files, prev_file_id_map = await asyncio.to_thread(
                             _gdrive_service.download_pdfs,
                             request.prev_month_gdrive_folder_id
                         )
+                        file_id_map.update(prev_file_id_map)
                         if prev_invoice_dir:
                             prev_invoices = await asyncio.to_thread(parse_invoices, prev_invoice_dir)
+                            # Set gdrive_file_id on each invoice
+                            for inv in prev_invoices:
+                                inv.gdrive_file_id = file_id_map.get(inv.filename)
                             invoices.extend(prev_invoices)
                             yield send_event("progress", {
                                 "step": "downloaded_prev",
@@ -540,6 +550,17 @@ async def monthly_reconcile_stream(
             month.last_synced_at = datetime.utcnow()
             month.error_message = None
             db.commit()
+
+            # Clean up downloaded files
+            import shutil
+            if request.gdrive_folder_id:
+                download_dir = _gdrive_service._download_dir / request.gdrive_folder_id
+                if download_dir.exists():
+                    shutil.rmtree(download_dir, ignore_errors=True)
+            if request.prev_month_gdrive_folder_id:
+                prev_download_dir = _gdrive_service._download_dir / request.prev_month_gdrive_folder_id
+                if prev_download_dir.exists():
+                    shutil.rmtree(prev_download_dir, ignore_errors=True)
 
             yield send_event("complete", {
                 "year_month": year_month,

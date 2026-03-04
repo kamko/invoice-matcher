@@ -72,12 +72,15 @@ For Google Drive integration, set up OAuth credentials in Google Cloud Console.
 ### Report Features
 
 - **Unmatched Tab** - Transactions without matching invoices
-  - Upload invoice PDF to match
+  - Upload invoice PDF to match (with amount validation)
   - Mark as "known" (recurring payments, subscriptions, etc.)
-- **Matched Tab** - Transactions successfully matched with invoices
-- **Known Tab** - Transactions matched by known rules
+- **Matched Tab** - Transactions matched with invoices
+  - Direct links to invoice PDFs in Google Drive
+- **Known Tab** - Transactions matched by known rules (shows rule reason)
 - **Fees Tab** - Bank fees
 - **Income Tab** - Incoming transactions
+
+Month list shows completion status - green checkmark when all transactions are matched.
 
 ### Known Transaction Rules
 

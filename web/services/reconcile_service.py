@@ -342,4 +342,43 @@ class ReconcileService:
                 "fees": [],
                 "income": [],
             }
-        return month.results_json
+
+        results = month.results_json.copy()
+
+        # Enrich known transactions with rule_reason if missing
+        known = results.get("known", [])
+        if known:
+            enriched_known = []
+            for trans in known:
+                if not trans.get("rule_reason"):
+                    try:
+                        # Try to find matching rule
+                        from models.transaction import Transaction as TransModel
+                        from decimal import Decimal
+                        from datetime import date as date_type
+                        # Parse date
+                        date_val = trans.get("date")
+                        if isinstance(date_val, str):
+                            date_val = date_type.fromisoformat(date_val)
+                        t = TransModel(
+                            id=trans.get("id", ""),
+                            date=date_val,
+                            amount=Decimal(str(trans.get("amount", 0))),
+                            currency=trans.get("currency", "EUR"),
+                            counter_account=trans.get("counter_account"),
+                            counter_name=trans.get("counter_name"),
+                            vs=trans.get("vs"),
+                            note=trans.get("note"),
+                            transaction_type=trans.get("transaction_type", "unknown"),
+                            raw_type=trans.get("raw_type", ""),
+                        )
+                        rule = self.known_service.match_transaction(t)
+                        if rule:
+                            trans = {**trans, "rule_reason": rule.reason}
+                    except Exception as e:
+                        print(f"Error enriching known transaction: {e}")
+                enriched_known.append(trans)
+            results["known"] = enriched_known
+
+        return results
+

@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
-import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink } from "lucide-react"
+import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
 import { useMonths, useGDriveStatus, useGDriveAuthUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -298,12 +298,21 @@ export function HomePage() {
                     <div className="flex items-center gap-4">
                       <div className="text-right text-sm">
                         <div className="text-green-600">{m.matched_count} matched</div>
-                        <div className="text-amber-600">{m.unmatched_count} unmatched</div>
+                        {m.unmatched_count > 0 ? (
+                          <div className="text-amber-600">{m.unmatched_count} unmatched</div>
+                        ) : (
+                          <div className="text-green-600 flex items-center gap-1 justify-end">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            All matched
+                          </div>
+                        )}
                       </div>
                       <Badge
                         variant={
-                          m.status === "completed"
+                          m.status === "completed" && m.unmatched_count === 0
                             ? "success"
+                            : m.status === "completed"
+                            ? "outline"
                             : m.status === "processing"
                             ? "secondary"
                             : m.status === "failed"
@@ -311,7 +320,7 @@ export function HomePage() {
                             : "outline"
                         }
                       >
-                        {m.status}
+                        {m.status === "completed" && m.unmatched_count === 0 ? "complete" : m.status}
                       </Badge>
                       <ChevronRight className="h-5 w-5 text-muted-foreground" />
                     </div>
