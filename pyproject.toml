@@ -20,6 +20,10 @@ dependencies = [
     # Google Drive
     "google-api-python-client>=2.100.0",
     "google-auth-oauthlib>=1.2.0",
+    "pymupdf>=1.27.1",
+    "pyzbar>=0.1.9",
+    "pillow>=12.1.1",
+    "opencv-python>=4.13.0.92",
 ]
 
 [tool.hatch.build.targets.wheel]

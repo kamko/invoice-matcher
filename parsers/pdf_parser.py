@@ -9,6 +9,7 @@ from typing import List, Optional
 import pdfplumber
 
 from models.invoice import Invoice
+from parsers.ekasa_parser import parse_ekasa_pdf
 
 
 def parse_invoices(directory: Path) -> List[Invoice]:
@@ -288,7 +289,8 @@ def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
     """
     Parse an uploaded PDF file (without filename convention).
 
-    Extracts all info from PDF content.
+    Extracts all info from PDF content. For scanned receipts,
+    tries to extract QR code and fetch data from e-kasa API.
 
     Args:
         pdf_path: Path to the PDF file
@@ -303,7 +305,19 @@ def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
                 page_text = page.extract_text() or ""
                 text += page_text + "\n"
 
+            # If no text extracted (scanned image), try e-kasa QR parsing
             if not text.strip():
+                ekasa_receipt = parse_ekasa_pdf(pdf_path)
+                if ekasa_receipt:
+                    return Invoice(
+                        file_path=pdf_path,
+                        invoice_date=ekasa_receipt.issue_date.date(),
+                        invoice_number=ekasa_receipt.receipt_id,
+                        payment_type="card",
+                        vendor=ekasa_receipt.vendor_name,
+                        amount=ekasa_receipt.total_price,
+                        vs=None
+                    )
                 return None
 
             # Extract data from content
@@ -311,6 +325,20 @@ def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
             vs = extract_vs(text)
             invoice_date_dt = extract_date(text)
             vendor = extract_vendor(text)
+
+            # If no amount found in text, try e-kasa as fallback
+            if amount is None:
+                ekasa_receipt = parse_ekasa_pdf(pdf_path)
+                if ekasa_receipt:
+                    return Invoice(
+                        file_path=pdf_path,
+                        invoice_date=ekasa_receipt.issue_date.date(),
+                        invoice_number=ekasa_receipt.receipt_id,
+                        payment_type="card",
+                        vendor=ekasa_receipt.vendor_name,
+                        amount=ekasa_receipt.total_price,
+                        vs=None
+                    )
 
             # Use today if no date found
             if invoice_date_dt:
@@ -332,4 +360,19 @@ def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
             )
 
     except Exception as e:
+        # Try e-kasa as last resort
+        try:
+            ekasa_receipt = parse_ekasa_pdf(pdf_path)
+            if ekasa_receipt:
+                return Invoice(
+                    file_path=pdf_path,
+                    invoice_date=ekasa_receipt.issue_date.date(),
+                    invoice_number=ekasa_receipt.receipt_id,
+                    payment_type="card",
+                    vendor=ekasa_receipt.vendor_name,
+                    amount=ekasa_receipt.total_price,
+                    vs=None
+                )
+        except Exception:
+            pass
         return None
