@@ -1,0 +1,391 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+
+const API_BASE = '/api'
+
+async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${url}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+
+  if (response.status === 204) {
+    return null as T
+  }
+
+  return response.json()
+}
+
+// Types
+export interface KnownTransaction {
+  id: number
+  rule_type: 'exact' | 'pattern' | 'vendor'
+  vendor_pattern?: string
+  amount?: string
+  amount_min?: string
+  amount_max?: string
+  vs_pattern?: string
+  counter_account?: string
+  reason: string
+  category?: string
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+export interface Transaction {
+  id: string
+  date: string
+  amount: string
+  currency: string
+  counter_account: string
+  counter_name: string
+  vs: string
+  note: string
+  transaction_type: string
+  rule_reason?: string
+  rule_category?: string
+}
+
+export interface Invoice {
+  file_path: string
+  filename: string
+  invoice_date: string
+  invoice_number: string
+  payment_type: string
+  vendor: string
+  amount?: string
+  vs?: string
+}
+
+export interface MatchResult {
+  transaction: Transaction
+  invoice?: Invoice
+  confidence: number
+  confidence_pct: number
+  status: 'OK' | 'REVIEW' | 'NO_MATCH'
+  strategy_scores: Record<string, number>
+}
+
+export interface Session {
+  id: number
+  from_date: string
+  to_date: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  created_at: string
+  completed_at?: string
+  matched_count: number
+  unmatched_count: number
+  review_count: number
+  known_count: number
+  fee_count: number
+  income_count: number
+  matched: MatchResult[]
+  unmatched: Transaction[]
+  known: Transaction[]
+  fees: Transaction[]
+  income: Transaction[]
+  unmatched_invoices: Invoice[]
+  error_message?: string
+}
+
+export interface ReconcileRequest {
+  from_date: string
+  to_date: string
+  fio_token: string
+  gdrive_folder_id?: string
+  invoice_dir?: string
+}
+
+export interface MonthlyReconcileRequest {
+  year_month: string
+  fio_token: string
+  gdrive_folder_id?: string
+  invoice_dir?: string
+  prev_month_gdrive_folder_id?: string
+  prev_month_invoice_dir?: string
+}
+
+export interface MonthData {
+  year_month: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  last_synced_at?: string
+  created_at: string
+  matched_count: number
+  unmatched_count: number
+  review_count: number
+  known_count: number
+  fee_count: number
+  income_count: number
+  matched: MatchResult[]
+  unmatched: Transaction[]
+  known: Transaction[]
+  fees: Transaction[]
+  income: Transaction[]
+  unmatched_invoices: Invoice[]
+  error_message?: string
+}
+
+export interface MonthListItem {
+  year_month: string
+  status: string
+  matched_count: number
+  unmatched_count: number
+  last_synced_at?: string
+}
+
+export interface MarkKnownRequest {
+  transaction_id: string
+  rule_type: 'exact' | 'pattern' | 'vendor' | 'note'
+  reason: string
+  category?: string
+  vendor_pattern?: string
+  note_pattern?: string
+  amount?: string
+  amount_min?: string
+  amount_max?: string
+  counter_account?: string
+}
+
+// Hooks
+
+// Known Transactions
+export function useKnownTransactions(activeOnly = false) {
+  return useQuery({
+    queryKey: ['known-transactions', activeOnly],
+    queryFn: () =>
+      fetchJson<KnownTransaction[]>(`/known-transactions?active_only=${activeOnly}`),
+  })
+}
+
+export function useCreateKnownTransaction() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Omit<KnownTransaction, 'id' | 'created_at' | 'updated_at'>) =>
+      fetchJson<KnownTransaction>('/known-transactions', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+export function useUpdateKnownTransaction() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: Partial<KnownTransaction> & { id: number }) =>
+      fetchJson<KnownTransaction>(`/known-transactions/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+export function useDeleteKnownTransaction() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) =>
+      fetchJson<void>(`/known-transactions/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+// Reconciliation
+export function useStartReconciliation() {
+  return useMutation({
+    mutationFn: (data: ReconcileRequest) =>
+      fetchJson<{ session_id: number; status: string; message: string }>('/reconcile', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  })
+}
+
+export function useSession(sessionId: number | null) {
+  return useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => fetchJson<Session>(`/sessions/${sessionId}`),
+    enabled: sessionId !== null,
+    refetchInterval: (data) => {
+      // Poll while processing
+      if (data?.state?.data?.status === 'processing') {
+        return 2000
+      }
+      return false
+    },
+  })
+}
+
+export function useMarkKnown() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sessionId, ...data }: MarkKnownRequest & { sessionId: number }) =>
+      fetchJson<{ success: boolean; rule_id: number }>(`/sessions/${sessionId}/mark-known`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['session', variables.sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+export interface MatchWithPdfResponse {
+  success: boolean
+  message: string
+  gdrive_file_id?: string
+  invoice?: Invoice
+}
+
+export function useMatchWithPdf() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ sessionId, transactionId, file }: {
+      sessionId: number
+      transactionId: string
+      file: File
+    }): Promise<MatchWithPdfResponse> => {
+      const formData = new FormData()
+      formData.append('transaction_id', transactionId)
+      formData.append('file', file)
+
+      const response = await fetch(`/api/sessions/${sessionId}/match-with-pdf`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['session', variables.sessionId] })
+    },
+  })
+}
+
+// ===== Month-Based Hooks =====
+
+export function useMonths() {
+  return useQuery({
+    queryKey: ['months'],
+    queryFn: () => fetchJson<MonthListItem[]>('/months'),
+  })
+}
+
+export function useMonth(yearMonth: string | null) {
+  return useQuery({
+    queryKey: ['month', yearMonth],
+    queryFn: () => fetchJson<MonthData>(`/months/${yearMonth}`),
+    enabled: yearMonth !== null,
+    refetchInterval: (data) => {
+      if (data?.state?.data?.status === 'processing') {
+        return 2000
+      }
+      return false
+    },
+  })
+}
+
+export function useSyncMonth() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ yearMonth, ...data }: MonthlyReconcileRequest & { yearMonth: string }) =>
+      fetchJson<{ session_id: number; status: string; message: string }>(`/months/${yearMonth}/sync`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+      queryClient.invalidateQueries({ queryKey: ['months'] })
+    },
+  })
+}
+
+export function useMarkKnownMonthly() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ yearMonth, ...data }: MarkKnownRequest & { yearMonth: string }) =>
+      fetchJson<{ success: boolean; rule_id: number; matched_count: number }>(`/months/${yearMonth}/mark-known`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+      queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+export function useMatchWithPdfMonthly() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ yearMonth, transactionId, file }: {
+      yearMonth: string
+      transactionId: string
+      file: File
+    }): Promise<MatchWithPdfResponse> => {
+      const formData = new FormData()
+      formData.append('transaction_id', transactionId)
+      formData.append('file', file)
+
+      const response = await fetch(`/api/months/${yearMonth}/match-with-pdf`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+    },
+  })
+}
+
+// Google Drive
+export function useGDriveStatus() {
+  return useQuery({
+    queryKey: ['gdrive-status'],
+    queryFn: () => fetchJson<{ available: boolean; authenticated: boolean }>('/gdrive/status'),
+  })
+}
+
+export function useGDriveAuthUrl() {
+  return useMutation({
+    mutationFn: () => fetchJson<{ auth_url: string }>('/gdrive/auth-url'),
+  })
+}
+
+export function useGDriveFolders(parentId: string, showAll = false) {
+  return useQuery({
+    queryKey: ['gdrive-folders', parentId, showAll],
+    queryFn: () =>
+      fetchJson<{ folders: Array<{ id: string; name: string; parent_id?: string }> }>(
+        `/gdrive/folders?parent_id=${parentId}&all=${showAll}`
+      ),
+    enabled: !!parentId, // Only fetch when parentId is provided
+  })
+}

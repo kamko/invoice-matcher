@@ -166,3 +166,170 @@ def extract_vs(text: str) -> Optional[str]:
             return match.group(1)
 
     return None
+
+
+def extract_date(text: str) -> Optional[datetime]:
+    """Extract invoice date from text."""
+    MONTHS = {
+        'january': 1, 'jan': 1,
+        'february': 2, 'feb': 2,
+        'march': 3, 'mar': 3,
+        'april': 4, 'apr': 4,
+        'may': 5,
+        'june': 6, 'jun': 6,
+        'july': 7, 'jul': 7,
+        'august': 8, 'aug': 8,
+        'september': 9, 'sep': 9, 'sept': 9,
+        'october': 10, 'oct': 10,
+        'november': 11, 'nov': 11,
+        'december': 12, 'dec': 12,
+    }
+
+    # Try month name patterns first (e.g., "February 6, 2026" or "Feb 6, 2026")
+    month_pattern = r"(?:Date\s+(?:of\s+)?issue|Issue\s+date|Date)[\s:]*([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})"
+    match = re.search(month_pattern, text, re.IGNORECASE)
+    if match:
+        month_str, day, year = match.groups()
+        month = MONTHS.get(month_str.lower())
+        if month:
+            try:
+                return datetime(int(year), month, int(day))
+            except ValueError:
+                pass
+
+    # Fallback: any month name followed by day, year
+    general_month_pattern = r"([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})"
+    for match in re.finditer(general_month_pattern, text):
+        month_str, day, year = match.groups()
+        month = MONTHS.get(month_str.lower())
+        if month:
+            try:
+                return datetime(int(year), month, int(day))
+            except ValueError:
+                continue
+
+    # Common date patterns
+    patterns = [
+        # DD.MM.YYYY or DD/MM/YYYY
+        (r"(?:Date|Datum|Issue|Vystavení)[\s:]*(\d{1,2})[./](\d{1,2})[./](\d{4})", "dmy"),
+        # YYYY-MM-DD
+        (r"(?:Date|Datum|Issue)[\s:]*(\d{4})-(\d{2})-(\d{2})", "ymd"),
+        # Any date DD.MM.YYYY
+        (r"(\d{1,2})[./](\d{1,2})[./](\d{4})", "dmy"),
+    ]
+
+    for pattern, fmt in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            try:
+                if fmt == "dmy":
+                    d, m, y = match.groups()
+                    return datetime(int(y), int(m), int(d))
+                elif fmt == "ymd":
+                    y, m, d = match.groups()
+                    return datetime(int(y), int(m), int(d))
+            except (ValueError, TypeError):
+                continue
+
+    return None
+
+
+def extract_vendor(text: str) -> Optional[str]:
+    """Extract vendor name from text."""
+    # Known vendor patterns - add common ones
+    known_vendors = {
+        'openai': 'openai',
+        'chatgpt': 'openai',
+        'google': 'google',
+        'hetzner': 'hetzner',
+        'cloudflare': 'cloudflare',
+        'amazon': 'amazon',
+        'aws': 'aws',
+        'microsoft': 'microsoft',
+        'azure': 'azure',
+        'digitalocean': 'digitalocean',
+        'github': 'github',
+        'slack': 'slack',
+        'zoom': 'zoom',
+        'dropbox': 'dropbox',
+        'notion': 'notion',
+        'figma': 'figma',
+        'vercel': 'vercel',
+        'netlify': 'netlify',
+        'heroku': 'heroku',
+        'stripe': 'stripe',
+    }
+
+    text_lower = text.lower()
+    for keyword, vendor in known_vendors.items():
+        if keyword in text_lower:
+            return vendor
+
+    # Look for common vendor/company patterns
+    patterns = [
+        r"(?:From|Od|Dodavatel|Supplier|Company)[\s:]*([A-Za-z0-9\s.,&-]+?)(?:\n|$)",
+        r"^([A-Z][A-Za-z0-9\s.,&-]{2,30}(?:s\.r\.o\.|a\.s\.|Inc|LLC|Ltd|GmbH|Limited))",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            vendor = match.group(1).strip()
+            # Clean up and slugify
+            vendor = re.sub(r'[^\w\s-]', '', vendor)
+            vendor = re.sub(r'\s+', '-', vendor).lower()[:30]
+            if len(vendor) > 2:
+                return vendor
+
+    return None
+
+
+def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
+    """
+    Parse an uploaded PDF file (without filename convention).
+
+    Extracts all info from PDF content.
+
+    Args:
+        pdf_path: Path to the PDF file
+
+    Returns:
+        Invoice object or None if parsing fails
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                text += page_text + "\n"
+
+            if not text.strip():
+                return None
+
+            # Extract data from content
+            amount = extract_amount(text)
+            vs = extract_vs(text)
+            invoice_date_dt = extract_date(text)
+            vendor = extract_vendor(text)
+
+            # Use today if no date found
+            if invoice_date_dt:
+                invoice_date = invoice_date_dt.date()
+            else:
+                invoice_date = datetime.now().date()
+
+            # Generate invoice number from VS or filename
+            invoice_number = vs or pdf_path.stem
+
+            return Invoice(
+                file_path=pdf_path,
+                invoice_date=invoice_date,
+                invoice_number=invoice_number,
+                payment_type="unknown",
+                vendor=vendor or "unknown",
+                amount=amount,
+                vs=vs
+            )
+
+    except Exception as e:
+        return None

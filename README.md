@@ -1,54 +1,82 @@
-# invoice-matcher
+# Invoice Matcher
 
 Automatically reconcile bank statements with invoice PDFs. Matches transactions to invoices using weighted scoring based on amount, vendor name, date proximity, and variable symbol.
 
 ## Features
 
-- Parse Fio Bank CSV statements (Slovak format)
-- **Fetch transactions directly from Fio Bank API**
+- **Web Application** with wizard-style interface
+- **Google Drive Integration** - fetch invoice PDFs directly from Drive
+- **Fio Bank API** - fetch transactions directly from Fio Bank
 - Extract data from invoice PDFs (amount, VS, dates)
 - Smart matching with configurable confidence thresholds
-- Text and HTML report generation
-- Payment type filtering (card vs wire transfers)
+- Mark transactions as "known" (recurring payments, loans, etc.)
+- Upload PDFs for unmatched transactions
+- Real-time progress updates during processing
 
-## Installation
+## Quick Start
+
+### 1. Install Dependencies
 
 ```bash
+# Backend
 uv sync
+
+# Frontend
+cd frontend && npm install
 ```
 
-Or with pip:
+### 2. Configure Environment
+
+Copy `.env.example` to `.env` and configure:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-## Usage
+For Google Drive integration, set up OAuth credentials in Google Cloud Console and add:
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
 
-### From CSV File
+### 3. Run the Application
 
 ```bash
-# Text report to stdout
-uv run python reconcile.py bank_statement.csv invoices/
+# Start backend (port 8000)
+uv run uvicorn web.main:app --reload
 
-# Generate HTML report
-uv run python reconcile.py bank_statement.csv invoices/ -o report.html
-
-# Open HTML report in browser
-uv run python reconcile.py bank_statement.csv invoices/ -o report.html --open
+# Start frontend (port 5173) - in another terminal
+cd frontend && npm run dev
 ```
 
-### From Fio Bank API
+Open http://localhost:5173 in your browser.
 
-Fetch transactions directly from Fio Bank using their API. You'll need an API token from your Fio internet banking settings.
+## Web Application
+
+### Wizard Flow
+
+1. **Date Range** - Select the period for reconciliation
+2. **Google Drive** - Connect and select folder with invoice PDFs
+3. **Bank Token** - Enter your Fio Bank API token
+4. **Processing** - Real-time progress with step-by-step updates
+5. **Report** - View results with matched/unmatched transactions
+
+### Report Features
+
+- **Matched Tab** - Transactions successfully matched with invoices
+- **Unmatched Tab** - Transactions without matching invoices
+  - Upload invoice PDF to match
+  - Mark as "known" (skip recurring payments)
+- **Known Tab** - Transactions marked as known
+
+## CLI Usage
+
+The CLI is still available for quick reconciliation:
 
 ```bash
-# Set token as environment variable
-export FIO_API_TOKEN=your_token_here
+# From Fio Bank API
 uv run python reconcile.py --api --from 2026-02-01 --to 2026-02-28 invoices/ -o report.html
 
-# Or pass token as argument
-uv run python reconcile.py --api --token YOUR_TOKEN --from 2026-02-01 --to 2026-02-28 invoices/
+# From CSV file
+uv run python reconcile.py bank_statement.csv invoices/ -o report.html
 ```
 
 **Note**: Fio API has a rate limit of one request per 30 seconds per token.
@@ -88,11 +116,23 @@ Examples:
 ```
 invoice-matcher/
 ├── reconcile.py          # CLI entry point
-├── requirements.txt      # Dependencies
 ├── models/               # Data models
 ├── parsers/              # CSV and PDF parsers
 ├── matching/             # Matching algorithms
-└── reports/              # Report generators
+├── reports/              # Report generators
+├── web/                  # FastAPI backend
+│   ├── main.py           # App entry point
+│   ├── config.py         # Settings
+│   ├── database/         # SQLAlchemy models
+│   ├── services/         # Business logic
+│   ├── routers/          # API endpoints
+│   └── schemas/          # Pydantic models
+└── frontend/             # React SPA
+    ├── src/
+    │   ├── pages/        # Page components
+    │   ├── components/   # UI components
+    │   └── api/          # API client
+    └── package.json
 ```
 
 ## License

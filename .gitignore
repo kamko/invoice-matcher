@@ -32,3 +32,18 @@ Thumbs.db
 # Data files (keep samples, ignore real data)
 *.csv
 !sample_*.csv
+
+# Data directory (database, downloads)
+data/
+
+# PDF files (invoices - sensitive business data)
+*.pdf
+
+# Node.js / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs
+*.log
+npm-debug.log*
