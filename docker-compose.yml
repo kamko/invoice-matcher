@@ -1,0 +1,15 @@
+services:
+  invoice-matcher:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - invoice-data:/app/data
+    environment:
+      - DATA_DIR=/app/data
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    restart: unless-stopped
+
+volumes:
+  invoice-data:

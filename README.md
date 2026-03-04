@@ -15,7 +15,22 @@ Automatically reconcile bank statements with invoice PDFs. Matches transactions 
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Docker (Recommended)
+
+```bash
+# Create .env file with Google OAuth credentials (optional)
+echo "GOOGLE_CLIENT_ID=your-client-id" > .env
+echo "GOOGLE_CLIENT_SECRET=your-secret" >> .env
+
+# Start the application
+docker compose up -d
+```
+
+Open http://localhost:8000 in your browser.
+
+Data is persisted in a Docker volume (`invoice-data`).
+
+### Development Setup
 
 ```bash
 # Backend
@@ -23,23 +38,7 @@ uv sync
 
 # Frontend
 cd frontend && npm install
-```
 
-### 2. Configure Environment
-
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .env.example .env
-```
-
-For Google Drive integration, set up OAuth credentials in Google Cloud Console and add:
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-
-### 3. Run the Application
-
-```bash
 # Start backend (port 8000)
 uv run uvicorn web.main:app --reload
 
@@ -47,7 +46,7 @@ uv run uvicorn web.main:app --reload
 cd frontend && npm run dev
 ```
 
-Open http://localhost:5173 in your browser.
+For Google Drive integration, set up OAuth credentials in Google Cloud Console.
 
 ## Web Application
 

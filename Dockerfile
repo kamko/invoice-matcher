@@ -1,0 +1,41 @@
+# Build frontend
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Build backend
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install uv
+
+# Copy Python project files
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+# Copy application code
+COPY models/ ./models/
+COPY parsers/ ./parsers/
+COPY matching/ ./matching/
+COPY reports/ ./reports/
+COPY web/ ./web/
+COPY reconcile.py ./
+
+# Copy built frontend
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Create data directory for SQLite
+RUN mkdir -p /app/data
+
+ENV PYTHONUNBUFFERED=1
+ENV DATA_DIR=/app/data
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "8000"]
