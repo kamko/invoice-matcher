@@ -7,6 +7,7 @@ Automatically reconcile bank statements with invoice PDFs. Matches transactions 
 - **Web Application** with month-based reconciliation
 - **Google Drive Integration** - fetch invoice PDFs directly from Drive
 - **Fio Bank API** - fetch transactions directly from Fio Bank
+- **E-kasa Receipt Parsing** - extract data from scanned Slovak receipts via QR code
 - Extract data from invoice PDFs (amount, VS, dates)
 - Smart matching with configurable confidence thresholds
 - Mark transactions as "known" (recurring payments, loans, etc.)
@@ -128,6 +129,22 @@ YYYY-MM-DD-NNN_type_vendor.pdf
 Examples:
 - `2026-02-03-001_card_hetzner.pdf`
 - `2026-02-14-001_wire_efiia.pdf`
+
+## E-kasa Receipt Support
+
+Scanned Slovak receipts (e-kasa) are automatically parsed:
+
+1. QR code is extracted from the scanned PDF using OpenCV
+2. Receipt ID (format: `O-XXXX...`) is decoded from the QR
+3. Full receipt data is fetched from the Slovak Financial Administration API
+
+Extracted data includes:
+- **Vendor name** (ICO, DIC)
+- **Total amount**
+- **Issue date and time**
+- **Line items**
+
+This enables matching of cash receipts that would otherwise be difficult to parse via OCR.
 
 ## License
 
