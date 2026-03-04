@@ -52,6 +52,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const handleMarkKnown = async (data: MarkKnownData) => {
     await markKnown.mutateAsync({ ...data, yearMonth })
     setMarkKnownTransaction(null)
+    window.location.reload()
   }
 
   const handleUploadPdf = async (file: File) => {
@@ -62,6 +63,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
       file,
     })
     setUploadPdfTransaction(null)
+    window.location.reload()
   }
 
   const handleResync = () => {

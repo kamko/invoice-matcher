@@ -130,31 +130,6 @@ Examples:
 - `2026-02-03-001_card_hetzner.pdf`
 - `2026-02-14-001_wire_efiia.pdf`
 
-## Project Structure
-
-```
-invoice-matcher/
-├── reconcile.py          # CLI entry point
-├── models/               # Data models
-├── parsers/              # CSV and PDF parsers
-├── matching/             # Matching algorithms
-├── reports/              # Report generators
-├── web/                  # FastAPI backend
-│   ├── main.py           # App entry point
-│   ├── config.py         # Settings
-│   ├── database/         # SQLAlchemy models
-│   ├── services/         # Business logic
-│   ├── routers/          # API endpoints
-│   └── schemas/          # Pydantic models
-└── frontend/             # React SPA
-    ├── src/
-    │   ├── pages/        # Page components
-    │   ├── components/   # UI components
-    │   ├── context/      # React context providers
-    │   └── api/          # API client
-    └── package.json
-```
-
 ## License
 
 MIT
