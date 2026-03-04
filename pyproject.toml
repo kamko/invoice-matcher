@@ -1,0 +1,24 @@
+[project]
+name = "invoice-matcher"
+version = "1.0.0"
+description = "Automatically reconcile bank statements with invoice PDFs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "pdfplumber>=0.10.0",
+    "pandas>=2.0.0",
+    "rapidfuzz>=3.0.0",
+    "tabulate>=0.9.0",
+    "fiobank>=4.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["models", "parsers", "matching", "reports"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = ""
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -2,3 +2,4 @@ pdfplumber>=0.10.0
 pandas>=2.0.0
 rapidfuzz>=3.0.0
 tabulate>=0.9.0
+fiobank>=4.0.0

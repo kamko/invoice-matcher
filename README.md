@@ -5,6 +5,7 @@ Automatically reconcile bank statements with invoice PDFs. Matches transactions 
 ## Features
 
 - Parse Fio Bank CSV statements (Slovak format)
+- **Fetch transactions directly from Fio Bank API**
 - Extract data from invoice PDFs (amount, VS, dates)
 - Smart matching with configurable confidence thresholds
 - Text and HTML report generation
@@ -13,24 +14,44 @@ Automatically reconcile bank statements with invoice PDFs. Matches transactions 
 ## Installation
 
 ```bash
+uv sync
+```
+
+Or with pip:
+
+```bash
 pip install -r requirements.txt
 ```
 
 ## Usage
 
+### From CSV File
+
 ```bash
 # Text report to stdout
-python reconcile.py bank_statement.csv invoices_directory/
-
-# Save text report
-python reconcile.py bank_statement.csv invoices_directory/ -o report.txt
+uv run python reconcile.py bank_statement.csv invoices/
 
 # Generate HTML report
-python reconcile.py bank_statement.csv invoices_directory/ -o report.html
+uv run python reconcile.py bank_statement.csv invoices/ -o report.html
 
 # Open HTML report in browser
-python reconcile.py bank_statement.csv invoices_directory/ -o report.html --open
+uv run python reconcile.py bank_statement.csv invoices/ -o report.html --open
 ```
+
+### From Fio Bank API
+
+Fetch transactions directly from Fio Bank using their API. You'll need an API token from your Fio internet banking settings.
+
+```bash
+# Set token as environment variable
+export FIO_API_TOKEN=your_token_here
+uv run python reconcile.py --api --from 2026-02-01 --to 2026-02-28 invoices/ -o report.html
+
+# Or pass token as argument
+uv run python reconcile.py --api --token YOUR_TOKEN --from 2026-02-01 --to 2026-02-28 invoices/
+```
+
+**Note**: Fio API has a rate limit of one request per 30 seconds per token.
 
 ## Matching Strategy
 
