@@ -45,6 +45,12 @@ export function SyncProgressToast({
     known: 0,
   })
 
+  // Use ref for onComplete to avoid re-triggering useEffect
+  const onCompleteRef = React.useRef(onComplete)
+  React.useEffect(() => {
+    onCompleteRef.current = onComplete
+  }, [onComplete])
+
   React.useEffect(() => {
     if (!open) return
 
@@ -155,7 +161,7 @@ export function SyncProgressToast({
             unmatched: data.unmatched_count as number,
             known: data.known_count as number,
           })
-          onComplete()
+          onCompleteRef.current()
           break
         case "error":
           setError(data.message as string)
@@ -168,7 +174,7 @@ export function SyncProgressToast({
     return () => {
       abortController.abort()
     }
-  }, [open, yearMonth, fioToken, gdriveFolderId, prevMonthGdriveFolderId, onComplete])
+  }, [open, yearMonth, fioToken, gdriveFolderId, prevMonthGdriveFolderId])
 
   if (!open) return null
 
