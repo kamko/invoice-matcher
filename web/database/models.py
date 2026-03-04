@@ -26,7 +26,6 @@ class KnownTransaction(Base):
     vs_pattern = Column(String(50), nullable=True)  # Variable symbol pattern
     counter_account = Column(String(100), nullable=True)
     reason = Column(String(500), nullable=False)  # "Monthly loan payment"
-    category = Column(String(50), nullable=True)  # 'loan', 'subscription', etc.
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -246,8 +246,7 @@ async def reconcile_stream(
                     {
                         **serialize_transaction(t),
                         "rule_reason": rule.reason,
-                        "rule_category": rule.category,
-                    }
+                                            }
                     for t, rule in known_transactions
                 ],
                 "fees": [serialize_transaction(t) for t in fee_transactions],
@@ -523,8 +522,7 @@ async def monthly_reconcile_stream(
                     {
                         **serialize_transaction(t),
                         "rule_reason": rule.reason,
-                        "rule_category": rule.category,
-                    }
+                                            }
                     for t, rule in known_transactions
                 ],
                 "fees": [serialize_transaction(t) for t in fee_transactions],

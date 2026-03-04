@@ -18,7 +18,6 @@ export interface MarkKnownData {
   transaction_id: string
   rule_type: "exact" | "pattern" | "vendor" | "note"
   reason: string
-  category?: string
   vendor_pattern?: string
   note_pattern?: string
   amount?: string
@@ -42,7 +41,6 @@ export function MarkKnownModal({
 }: MarkKnownModalProps) {
   const [ruleType, setRuleType] = React.useState<"exact" | "pattern" | "vendor" | "note">("note")
   const [reason, setReason] = React.useState("")
-  const [category, setCategory] = React.useState("")
   const [vendorPattern, setVendorPattern] = React.useState("")
   const [notePattern, setNotePattern] = React.useState("")
 
@@ -68,7 +66,6 @@ export function MarkKnownModal({
       transaction_id: transaction.id,
       rule_type: ruleType,
       reason,
-      category: category || undefined,
       vendor_pattern: (ruleType === "pattern" || ruleType === "vendor") ? vendorPattern : undefined,
       note_pattern: ruleType === "note" ? notePattern : undefined,
       amount: ruleType === "exact" ? transaction.amount : undefined,
@@ -171,29 +168,6 @@ export function MarkKnownModal({
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g., Monthly Netflix subscription"
               required
-            />
-          </div>
-
-          {/* Category */}
-          <div className="space-y-2">
-            <Label htmlFor="category">Category</Label>
-            <Select
-              id="category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              options={[
-                { value: "", label: "Select category (optional)" },
-                { value: "subscription", label: "Subscription" },
-                { value: "loan", label: "Loan Payment" },
-                { value: "transfer", label: "Internal Transfer" },
-                { value: "tax", label: "Tax Payment" },
-                { value: "insurance", label: "Insurance" },
-                { value: "utility", label: "Utility" },
-                { value: "salary", label: "Salary" },
-                { value: "rent", label: "Rent" },
-                { value: "fee", label: "Bank Fee" },
-                { value: "other", label: "Other" },
-              ]}
             />
           </div>
 

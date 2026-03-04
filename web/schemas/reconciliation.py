@@ -135,7 +135,6 @@ class MarkKnownRequest(BaseModel):
     transaction_id: str
     rule_type: str = Field(..., pattern="^(exact|pattern|vendor|note)$")
     reason: str = Field(..., min_length=1, max_length=500)
-    category: Optional[str] = None
     vendor_pattern: Optional[str] = None
     note_pattern: Optional[str] = None  # Regex pattern for note field
     amount: Optional[Decimal] = None

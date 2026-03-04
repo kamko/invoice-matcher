@@ -18,7 +18,6 @@ class KnownTransactionBase(BaseModel):
     vs_pattern: Optional[str] = None
     counter_account: Optional[str] = None
     reason: str = Field(..., min_length=1, max_length=500)
-    category: Optional[str] = None
     is_active: bool = True
 
 
@@ -40,7 +39,6 @@ class KnownTransactionUpdate(BaseModel):
     vs_pattern: Optional[str] = None
     counter_account: Optional[str] = None
     reason: Optional[str] = Field(None, min_length=1, max_length=500)
-    category: Optional[str] = None
     is_active: Optional[bool] = None
 
 

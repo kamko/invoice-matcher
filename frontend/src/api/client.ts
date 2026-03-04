@@ -34,7 +34,6 @@ export interface KnownTransaction {
   vs_pattern?: string
   counter_account?: string
   reason: string
-  category?: string
   is_active: boolean
   created_at: string
   updated_at?: string
@@ -51,7 +50,6 @@ export interface Transaction {
   note: string
   transaction_type: string
   rule_reason?: string
-  rule_category?: string
 }
 
 export interface Invoice {
@@ -145,7 +143,6 @@ export interface MarkKnownRequest {
   transaction_id: string
   rule_type: 'exact' | 'pattern' | 'vendor' | 'note'
   reason: string
-  category?: string
   vendor_pattern?: string
   note_pattern?: string
   amount?: string

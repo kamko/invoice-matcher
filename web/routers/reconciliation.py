@@ -165,7 +165,6 @@ def mark_as_known(
     rule_data = KnownTransactionCreate(
         rule_type=request.rule_type,
         reason=request.reason,
-        category=request.category,
         vendor_pattern=request.vendor_pattern,
         note_pattern=request.note_pattern,
         amount=request.amount,
@@ -213,7 +212,6 @@ def mark_as_known(
 
             if matches:
                 trans["rule_reason"] = request.reason
-                trans["rule_category"] = request.category
                 known.append(trans)
                 matched_count += 1
             else:
@@ -556,7 +554,6 @@ def mark_as_known_monthly(
     rule_data = KnownTransactionCreate(
         rule_type=request.rule_type,
         reason=request.reason,
-        category=request.category,
         vendor_pattern=request.vendor_pattern,
         note_pattern=request.note_pattern,
         amount=request.amount,
@@ -601,7 +598,6 @@ def mark_as_known_monthly(
 
             if matches:
                 trans["rule_reason"] = request.reason
-                trans["rule_category"] = request.category
                 known.append(trans)
                 matched_count += 1
             else:

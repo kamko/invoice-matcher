@@ -4,14 +4,14 @@ Automatically reconcile bank statements with invoice PDFs. Matches transactions 
 
 ## Features
 
-- **Web Application** with wizard-style interface
+- **Web Application** with month-based reconciliation
 - **Google Drive Integration** - fetch invoice PDFs directly from Drive
 - **Fio Bank API** - fetch transactions directly from Fio Bank
 - Extract data from invoice PDFs (amount, VS, dates)
 - Smart matching with configurable confidence thresholds
 - Mark transactions as "known" (recurring payments, loans, etc.)
 - Upload PDFs for unmatched transactions
-- Real-time progress updates during processing
+- Real-time progress updates during sync
 
 ## Quick Start
 
@@ -51,21 +51,40 @@ Open http://localhost:5173 in your browser.
 
 ## Web Application
 
-### Wizard Flow
+### Home Page
 
-1. **Date Range** - Select the period for reconciliation
-2. **Google Drive** - Connect and select folder with invoice PDFs
-3. **Bank Token** - Enter your Fio Bank API token
-4. **Processing** - Real-time progress with step-by-step updates
-5. **Report** - View results with matched/unmatched transactions
+- **Settings** - Configure Fio Bank API token and connect Google Drive
+- **Sync Month** - Select a month and invoice folder, then sync
+- **Monthly Reports** - View existing reconciliation results
+
+### Sync Flow
+
+1. Select month (e.g., "February 2026")
+2. Select Google Drive folder containing invoices for that month
+3. Click "Sync" - progress toast shows real-time updates:
+   - Fetching transactions from Fio Bank
+   - Downloading invoices from Google Drive
+   - Checking known transaction rules
+   - Matching transactions with invoices
+   - Saving results
+4. View report with matched/unmatched transactions
 
 ### Report Features
 
-- **Matched Tab** - Transactions successfully matched with invoices
 - **Unmatched Tab** - Transactions without matching invoices
   - Upload invoice PDF to match
-  - Mark as "known" (skip recurring payments)
-- **Known Tab** - Transactions marked as known
+  - Mark as "known" (recurring payments, subscriptions, etc.)
+- **Matched Tab** - Transactions successfully matched with invoices
+- **Known Tab** - Transactions matched by known rules
+- **Fees Tab** - Bank fees
+- **Income Tab** - Incoming transactions
+
+### Known Transaction Rules
+
+Create rules to automatically recognize recurring transactions:
+- **Note Pattern** - Match by regex pattern in transaction note
+- **Vendor Pattern** - Match by vendor name pattern
+- **Exact** - Match exact amount and account
 
 ## CLI Usage
 
@@ -131,6 +150,7 @@ invoice-matcher/
     ├── src/
     │   ├── pages/        # Page components
     │   ├── components/   # UI components
+    │   ├── context/      # React context providers
     │   └── api/          # API client
     └── package.json
 ```

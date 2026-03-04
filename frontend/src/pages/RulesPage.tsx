@@ -48,7 +48,6 @@ export function RulesPage() {
     vs_pattern: "",
     counter_account: "",
     reason: "",
-    category: "",
     is_active: true,
   })
 
@@ -62,7 +61,6 @@ export function RulesPage() {
       vs_pattern: "",
       counter_account: "",
       reason: "",
-      category: "",
       is_active: true,
     })
   }
@@ -82,7 +80,6 @@ export function RulesPage() {
       vs_pattern: rule.vs_pattern || "",
       counter_account: rule.counter_account || "",
       reason: rule.reason,
-      category: rule.category || "",
       is_active: rule.is_active,
     })
     setEditingRule(rule)
@@ -100,7 +97,6 @@ export function RulesPage() {
       vs_pattern: formData.vs_pattern || undefined,
       counter_account: formData.counter_account || undefined,
       reason: formData.reason,
-      category: formData.category || undefined,
       is_active: formData.is_active,
     }
 
@@ -150,7 +146,6 @@ export function RulesPage() {
               <TableHead>Type</TableHead>
               <TableHead>Pattern / Amount</TableHead>
               <TableHead>Reason</TableHead>
-              <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -159,7 +154,7 @@ export function RulesPage() {
           <TableBody>
             {!rules?.length ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   No rules defined yet
                 </TableCell>
               </TableRow>
@@ -177,11 +172,6 @@ export function RulesPage() {
                   </TableCell>
                   <TableCell className="max-w-[200px] truncate">
                     {rule.reason}
-                  </TableCell>
-                  <TableCell>
-                    {rule.category && (
-                      <Badge variant="secondary">{rule.category}</Badge>
-                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant={rule.is_active ? "success" : "secondary"}>
@@ -330,25 +320,6 @@ export function RulesPage() {
                 }
                 placeholder="Why is this a known transaction?"
                 required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Select
-                value={formData.category}
-                onChange={(e) =>
-                  setFormData({ ...formData, category: e.target.value })
-                }
-                options={[
-                  { value: "", label: "Select category" },
-                  { value: "subscription", label: "Subscription" },
-                  { value: "loan", label: "Loan Payment" },
-                  { value: "utility", label: "Utility" },
-                  { value: "salary", label: "Salary" },
-                  { value: "rent", label: "Rent" },
-                  { value: "other", label: "Other" },
-                ]}
               />
             </div>
 

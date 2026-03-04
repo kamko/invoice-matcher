@@ -159,13 +159,12 @@ export function KnownTable({ transactions }: KnownTableProps) {
           <TableHead>Amount</TableHead>
           <TableHead>Counter Party</TableHead>
           <TableHead>Reason</TableHead>
-          <TableHead>Category</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {transactions.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={5} className="text-center text-muted-foreground">
+            <TableCell colSpan={4} className="text-center text-muted-foreground">
               No known transactions
             </TableCell>
           </TableRow>
@@ -180,9 +179,6 @@ export function KnownTable({ transactions }: KnownTableProps) {
                 {t.counter_name || t.counter_account}
               </TableCell>
               <TableCell>{t.rule_reason || "-"}</TableCell>
-              <TableCell>
-                {t.rule_category && <Badge variant="secondary">{t.rule_category}</Badge>}
-              </TableCell>
             </TableRow>
           ))
         )}

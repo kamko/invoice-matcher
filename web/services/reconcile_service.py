@@ -147,7 +147,6 @@ class ReconcileService:
                 {
                     **self._serialize_transaction(t),
                     "rule_reason": rule.reason,
-                    "rule_category": rule.category,
                 }
                 for t, rule in known_transactions
             ],
