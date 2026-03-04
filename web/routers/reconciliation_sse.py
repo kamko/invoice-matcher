@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import AsyncGenerator
 from datetime import datetime
@@ -23,6 +24,27 @@ from parsers.pdf_parser import parse_invoices
 from matching.matcher import Matcher
 
 router = APIRouter(prefix="/api", tags=["reconciliation-sse"])
+
+
+def sanitize_error(error: Exception) -> str:
+    """Sanitize error message to remove sensitive data like API tokens in URLs."""
+    msg = str(error)
+    # Remove Fio API URLs that contain tokens
+    # Pattern: https://www.fio.cz/ib_api/rest/...token.../...
+    msg = re.sub(
+        r'https?://[^\s]*fio[^\s]*',
+        '[Fio API URL redacted]',
+        msg,
+        flags=re.IGNORECASE
+    )
+    # Also redact any URL with "token" in it
+    msg = re.sub(
+        r'https?://[^\s]*token[^\s]*',
+        '[URL with token redacted]',
+        msg,
+        flags=re.IGNORECASE
+    )
+    return msg
 
 
 class ReconcileSSERequest(BaseModel):
@@ -83,9 +105,10 @@ async def reconcile_stream(
                     "count": len(transactions)
                 })
             except Exception as e:
-                yield send_event("error", {"message": f"Failed to fetch transactions: {e}"})
+                error_msg = sanitize_error(e)
+                yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
                 session.status = "failed"
-                session.error_message = str(e)
+                session.error_message = error_msg
                 db.commit()
                 return
 
@@ -111,9 +134,10 @@ async def reconcile_stream(
                             "count": len(files)
                         })
                     except Exception as e:
-                        yield send_event("error", {"message": f"Failed to download: {e}"})
+                        error_msg = sanitize_error(e)
+                        yield send_event("error", {"message": f"Failed to download: {error_msg}"})
                         session.status = "failed"
-                        session.error_message = str(e)
+                        session.error_message = error_msg
                         db.commit()
                         return
                 else:
@@ -250,7 +274,7 @@ async def reconcile_stream(
             })
 
         except Exception as e:
-            yield send_event("error", {"message": str(e)})
+            yield send_event("error", {"message": sanitize_error(e)})
 
     return StreamingResponse(
         generate(),
@@ -358,9 +382,10 @@ async def monthly_reconcile_stream(
                     "count": len(transactions)
                 })
             except Exception as e:
-                yield send_event("error", {"message": f"Failed to fetch transactions: {e}"})
+                error_msg = sanitize_error(e)
+                yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
                 month.status = "failed"
-                month.error_message = str(e)
+                month.error_message = error_msg
                 db.commit()
                 return
 
@@ -390,7 +415,7 @@ async def monthly_reconcile_stream(
                             curr_invoices = await asyncio.to_thread(parse_invoices, invoice_dir)
                             invoices.extend(curr_invoices)
                     except Exception as e:
-                        yield send_event("progress", {"step": "download_warning", "message": f"Warning: {e}"})
+                        yield send_event("progress", {"step": "download_warning", "message": f"Warning: {sanitize_error(e)}"})
                 else:
                     yield send_event("error", {"message": "Not authenticated with Google Drive"})
                     month.status = "failed"
@@ -529,7 +554,7 @@ async def monthly_reconcile_stream(
             })
 
         except Exception as e:
-            yield send_event("error", {"message": str(e)})
+            yield send_event("error", {"message": sanitize_error(e)})
 
     return StreamingResponse(
         generate(),
