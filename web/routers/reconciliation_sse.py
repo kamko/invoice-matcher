@@ -313,6 +313,7 @@ def serialize_invoice(inv) -> dict:
         "vs": inv.vs,
         "gdrive_file_id": inv.gdrive_file_id,
         "is_credit_note": inv.is_credit_note,
+        "is_cash": inv.is_cash,
     }
 
 
@@ -614,9 +615,10 @@ async def monthly_reconcile_stream(
             await asyncio.sleep(0.1)
 
             # Step 4: Match transactions with invoices
-            # Separate credit-note invoices from regular invoices
-            credit_note_invoices = [inv for inv in invoices if inv.is_credit_note]
-            regular_invoices = [inv for inv in invoices if not inv.is_credit_note]
+            # Separate invoices by type: cash (auto-paid), credit-notes, regular
+            cash_invoices = [inv for inv in invoices if inv.is_cash]
+            credit_note_invoices = [inv for inv in invoices if inv.is_credit_note and not inv.is_cash]
+            regular_invoices = [inv for inv in invoices if not inv.is_credit_note and not inv.is_cash]
 
             yield send_event("progress", {"step": "matching", "message": "Matching transactions with invoices..."})
             await asyncio.sleep(0.1)
@@ -629,15 +631,30 @@ async def monthly_reconcile_stream(
             # Match credit-note invoices with income transactions (positive amounts)
             credit_matched, unmatched_income, unmatched_credit_inv = matcher.match_all(income_transactions, credit_note_invoices)
 
+            # Cash invoices are auto-matched (paid with cash, no bank transaction needed)
+            # We'll add them to matched results with a special "cash" indicator
+            from matching.matcher import MatchResult
+            cash_matched = [
+                MatchResult(
+                    transaction=None,  # No transaction for cash payments
+                    invoice=inv,
+                    confidence=1.0,
+                    strategy_scores={"CashPayment": 1.0}
+                )
+                for inv in cash_invoices
+            ]
+
             # Combine results
             all_matched = matched + credit_matched
             all_unmatched_inv = unmatched_regular_inv + unmatched_credit_inv
+            # Cash invoices are handled separately in results
 
             yield send_event("progress", {
                 "step": "matched",
-                "message": f"Matched {len(all_matched)} transactions ({len(credit_matched)} credit notes)",
+                "message": f"Matched {len(all_matched)} transactions, {len(cash_invoices)} cash, {len(credit_matched)} credit notes",
                 "matched_count": len(all_matched),
                 "unmatched_count": len(unmatched_trans),
+                "cash_count": len(cash_invoices),
                 "credit_note_matched": len(credit_matched)
             })
 
@@ -646,18 +663,31 @@ async def monthly_reconcile_stream(
             # Step 5: Save results
             yield send_event("progress", {"step": "saving", "message": "Saving results..."})
 
+            # Build matched results - include both transaction matches and cash invoices
+            matched_results = [
+                {
+                    "transaction": serialize_transaction(m.transaction),
+                    "invoice": serialize_invoice(m.invoice) if m.invoice else None,
+                    "confidence": m.confidence,
+                    "confidence_pct": m.confidence_pct,
+                    "status": m.status,
+                    "strategy_scores": m.strategy_scores,
+                }
+                for m in all_matched
+            ]
+            # Add cash invoices as matched (no transaction needed)
+            for inv in cash_invoices:
+                matched_results.append({
+                    "transaction": None,  # No bank transaction for cash
+                    "invoice": serialize_invoice(inv),
+                    "confidence": 1.0,
+                    "confidence_pct": 100,
+                    "status": "OK",
+                    "strategy_scores": {"CashPayment": 1.0},
+                })
+
             results = {
-                "matched": [
-                    {
-                        "transaction": serialize_transaction(m.transaction),
-                        "invoice": serialize_invoice(m.invoice) if m.invoice else None,
-                        "confidence": m.confidence,
-                        "confidence_pct": m.confidence_pct,
-                        "status": m.status,
-                        "strategy_scores": m.strategy_scores,
-                    }
-                    for m in all_matched
-                ],
+                "matched": matched_results,
                 "unmatched": [serialize_transaction(t) for t in unmatched_trans],
                 "unmatched_invoices": [serialize_invoice(inv) for inv in all_unmatched_inv],
                 "known": [
@@ -672,7 +702,8 @@ async def monthly_reconcile_stream(
             }
 
             month.results_json = results
-            month.matched_count = len([m for m in all_matched if m.status == "OK"])
+            # Count includes both transaction matches and cash invoices
+            month.matched_count = len([m for m in all_matched if m.status == "OK"]) + len(cash_invoices)
             month.review_count = len([m for m in all_matched if m.status == "REVIEW"])
             month.unmatched_count = len(unmatched_trans)
             month.known_count = len(known_transactions)
@@ -730,6 +761,22 @@ async def monthly_reconcile_stream(
                                 vendor=m.invoice.vendor,
                             )
                             db.add(payment)
+
+            # Record cash invoices as paid (no transaction needed)
+            for inv in cash_invoices:
+                if inv.gdrive_file_id:
+                    source_month = getattr(inv, 'source_month', year_month)
+                    if source_month == year_month:
+                        payment = InvoicePayment(
+                            invoice_month=source_month,
+                            gdrive_file_id=inv.gdrive_file_id,
+                            filename=inv.filename,
+                            paid_month=year_month,  # Cash = paid immediately
+                            transaction_id="CASH",  # Special marker for cash payments
+                            amount=Decimal(str(inv.amount)) if inv.amount else None,
+                            vendor=inv.vendor,
+                        )
+                        db.add(payment)
 
             # Record unmatched invoices from this month's folder
             # Regular invoices: unpaid; Credit notes: pending (needs income match)
@@ -1043,9 +1090,10 @@ async def batch_sync_stream(
                     else:
                         unknown_transactions.append(trans)
 
-                # Separate credit-note invoices from regular invoices
-                credit_note_invoices = [inv for inv in month_invoices if inv.is_credit_note]
-                regular_invoices = [inv for inv in month_invoices if not inv.is_credit_note]
+                # Separate invoices by type: cash (auto-paid), credit-notes, regular
+                cash_invoices = [inv for inv in month_invoices if inv.is_cash]
+                credit_note_invoices = [inv for inv in month_invoices if inv.is_credit_note and not inv.is_cash]
+                regular_invoices = [inv for inv in month_invoices if not inv.is_credit_note and not inv.is_cash]
 
                 # Match transactions with invoices
                 matcher = Matcher()
@@ -1060,20 +1108,33 @@ async def batch_sync_stream(
                 all_matched = matched + credit_matched
                 all_unmatched_inv = unmatched_regular_inv + unmatched_credit_inv
 
-                # Save results
+                # Save results - include cash invoices as matched
                 from decimal import Decimal
+                matched_results = [
+                    {
+                        "transaction": serialize_transaction(m_result.transaction),
+                        "invoice": serialize_invoice(m_result.invoice) if m_result.invoice else None,
+                        "confidence": m_result.confidence,
+                        "confidence_pct": m_result.confidence_pct,
+                        "status": m_result.status,
+                        "strategy_scores": m_result.strategy_scores,
+                    }
+                    for m_result in all_matched
+                ]
+                # Add cash invoices as matched (no transaction needed)
+                for inv in cash_invoices:
+                    if getattr(inv, 'source_month', ym) == ym:
+                        matched_results.append({
+                            "transaction": None,
+                            "invoice": serialize_invoice(inv),
+                            "confidence": 1.0,
+                            "confidence_pct": 100,
+                            "status": "OK",
+                            "strategy_scores": {"CashPayment": 1.0},
+                        })
+
                 results = {
-                    "matched": [
-                        {
-                            "transaction": serialize_transaction(m_result.transaction),
-                            "invoice": serialize_invoice(m_result.invoice) if m_result.invoice else None,
-                            "confidence": m_result.confidence,
-                            "confidence_pct": m_result.confidence_pct,
-                            "status": m_result.status,
-                            "strategy_scores": m_result.strategy_scores,
-                        }
-                        for m_result in all_matched
-                    ],
+                    "matched": matched_results,
                     "unmatched": [serialize_transaction(t) for t in unmatched_trans],
                     "unmatched_invoices": [serialize_invoice(inv) for inv in all_unmatched_inv if getattr(inv, 'source_month', ym) == ym],
                     "known": [
@@ -1104,7 +1165,9 @@ async def batch_sync_stream(
                 ]
 
                 month.results_json = results
-                month.matched_count = len([m_result for m_result in all_matched if m_result.status == "OK"])
+                # Count cash invoices from current month in matched count
+                cash_from_month = len([inv for inv in cash_invoices if getattr(inv, 'source_month', ym) == ym])
+                month.matched_count = len([m_result for m_result in all_matched if m_result.status == "OK"]) + cash_from_month
                 month.review_count = len([m_result for m_result in all_matched if m_result.status == "REVIEW"])
                 month.unmatched_count = len(unmatched_trans)
                 month.known_count = len(known_transactions)
@@ -1151,6 +1214,20 @@ async def batch_sync_stream(
                             filename=inv.filename,
                             paid_month=None,
                             transaction_id=None,
+                            amount=Decimal(str(inv.amount)) if inv.amount else None,
+                            vendor=inv.vendor,
+                        )
+                        db.add(payment)
+
+                # Record cash invoices as paid
+                for inv in cash_invoices:
+                    if inv.gdrive_file_id and getattr(inv, 'source_month', ym) == ym:
+                        payment = InvoicePayment(
+                            invoice_month=ym,
+                            gdrive_file_id=inv.gdrive_file_id,
+                            filename=inv.filename,
+                            paid_month=ym,  # Cash = paid immediately
+                            transaction_id="CASH",
                             amount=Decimal(str(inv.amount)) if inv.amount else None,
                             vendor=inv.vendor,
                         )

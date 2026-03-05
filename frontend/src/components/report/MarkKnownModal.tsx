@@ -190,6 +190,11 @@ export function MarkKnownModal({
               <p className="text-xs text-muted-foreground">
                 Match transactions going to this account number or IBAN
               </p>
+              {transaction?.counter_account && (
+                <p className="text-xs text-muted-foreground bg-muted p-2 rounded font-mono">
+                  Transaction IBAN: {transaction.counter_account}
+                </p>
+              )}
             </div>
           )}
 

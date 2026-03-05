@@ -178,6 +178,7 @@ class ReconcileService:
             "amount": str(inv.amount) if inv.amount else None,
             "vs": inv.vs,
             "is_credit_note": inv.is_credit_note,
+            "is_cash": inv.is_cash,
         }
 
     def get_session_results(self, session: ReconciliationSession) -> Dict[str, Any]:

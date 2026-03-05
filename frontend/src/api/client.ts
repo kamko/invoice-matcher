@@ -64,6 +64,7 @@ export interface Invoice {
   vs?: string
   gdrive_file_id?: string
   is_credit_note?: boolean
+  is_cash?: boolean
 }
 
 export interface MatchResult {

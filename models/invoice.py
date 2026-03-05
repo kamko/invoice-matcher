@@ -43,5 +43,14 @@ class Invoice:
         filename_lower = self.filename.lower()
         return "credit-note" in filename_lower or "credit_note" in filename_lower
 
+    @property
+    def is_cash(self) -> bool:
+        """Check if this is a cash payment invoice.
+
+        Cash invoices are already paid (with cash) and don't need
+        to match with any bank transaction.
+        """
+        return "_cash_" in self.filename.lower()
+
     def __str__(self) -> str:
         return f"Invoice({self.filename}, {self.amount}, {self.vendor})"
