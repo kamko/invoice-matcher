@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
 import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink, CheckCircle2, Download, Layers } from "lucide-react"
-import { useMonths, useGDriveStatus, useGDriveAuthUrl, useSetting, useSetSetting } from "@/api/client"
+import { useMonths, useGDriveStatus, useGDriveAuthUrl, useSetting, useSetSetting, useAppConfig } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -18,6 +18,7 @@ export function HomePage() {
   const getAuthUrl = useGDriveAuthUrl()
   const { data: parentFolderSetting } = useSetting("invoice_parent_folder_id")
   const { data: parentFolderNameSetting } = useSetting("invoice_parent_folder_name")
+  const { data: appConfig } = useAppConfig()
   const setSettingMutation = useSetSetting()
 
   // Listen for OAuth popup message
@@ -220,6 +221,16 @@ export function HomePage() {
                       </Button>
                     )}
                   </>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">LLM Model:</span>
+                {appConfig?.llm_enabled ? (
+                  <span className="text-sm font-mono">{appConfig.llm_model}</span>
+                ) : (
+                  <span className="text-sm text-amber-600">Not configured (set OPENROUTER_API_KEY)</span>
                 )}
               </div>
             </div>

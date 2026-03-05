@@ -55,6 +55,15 @@ def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/api/config")
+def get_config():
+    """Get public application config."""
+    return {
+        "llm_model": settings.openrouter_model,
+        "llm_enabled": bool(settings.openrouter_api_key),
+    }
+
+
 # Serve frontend static files in production
 FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
 

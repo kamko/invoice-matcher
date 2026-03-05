@@ -535,3 +535,16 @@ export function useSetSetting() {
     },
   })
 }
+
+// App Config
+export interface AppConfig {
+  llm_model: string
+  llm_enabled: boolean
+}
+
+export function useAppConfig() {
+  return useQuery({
+    queryKey: ['app-config'],
+    queryFn: () => fetchJson<AppConfig>('/config'),
+  })
+}

@@ -22,9 +22,14 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
 
+    # LLM (OpenRouter)
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-2.5-flash-lite"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Allow extra env vars not defined in Settings
 
 
 settings = Settings()
