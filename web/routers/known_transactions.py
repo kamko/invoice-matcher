@@ -41,9 +41,78 @@ def create_known_transaction(
     data: KnownTransactionCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new known transaction rule."""
+    """Create a new known transaction rule and apply to existing months."""
     service = KnownTransactionService(db)
-    return service.create(data)
+    rule = service.create(data)
+
+    # Apply new rule to all existing completed months
+    apply_rule_to_existing_months(rule, db)
+
+    return rule
+
+
+def apply_rule_to_existing_months(rule, db: Session):
+    """Apply a new rule to all completed months, moving matching transactions to known."""
+    from web.database.models import MonthlyReconciliation
+    from models.transaction import Transaction
+    from decimal import Decimal
+    from datetime import datetime
+
+    service = KnownTransactionService(db)
+
+    # Get all completed months with results
+    months = db.query(MonthlyReconciliation).filter(
+        MonthlyReconciliation.status == "completed",
+        MonthlyReconciliation.results_json.isnot(None)
+    ).all()
+
+    for month in months:
+        results = month.results_json
+        if not results or "unmatched" not in results:
+            continue
+
+        unmatched = results.get("unmatched", [])
+        known = results.get("known", [])
+        newly_matched = []
+        still_unmatched = []
+
+        for t_data in unmatched:
+            # Reconstruct transaction to test against rule
+            try:
+                t = Transaction(
+                    id=t_data["id"],
+                    date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
+                    amount=Decimal(t_data["amount"]),
+                    currency=t_data["currency"],
+                    counter_account=t_data.get("counter_account", ""),
+                    counter_name=t_data.get("counter_name", ""),
+                    vs=t_data.get("vs", ""),
+                    note=t_data.get("note", ""),
+                    transaction_type=t_data.get("transaction_type", "wire"),
+                    raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
+                )
+
+                if service._matches_rule(t, rule):
+                    # Move to known
+                    newly_matched.append({
+                        **t_data,
+                        "rule_reason": rule.reason,
+                    })
+                else:
+                    still_unmatched.append(t_data)
+            except Exception:
+                # Keep in unmatched if reconstruction fails
+                still_unmatched.append(t_data)
+
+        if newly_matched:
+            # Update month results
+            results["unmatched"] = still_unmatched
+            results["known"] = known + newly_matched
+            month.results_json = results
+            month.unmatched_count = len(still_unmatched)
+            month.known_count = len(results["known"])
+
+    db.commit()
 
 
 @router.put("/{rule_id}", response_model=KnownTransactionResponse)
