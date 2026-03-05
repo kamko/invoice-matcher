@@ -46,7 +46,8 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
     filename = pdf_path.name
 
     # Parse filename: YYYY-MM-DD-NNN_type_vendor.pdf
-    match = re.match(r"(\d{4}-\d{2}-\d{2})-(\d+)_(\w+)_(.+)\.pdf", filename)
+    # Note: type can contain hyphens (e.g., sepa-debit, credit-note)
+    match = re.match(r"(\d{4}-\d{2}-\d{2})-(\d+)_([a-zA-Z0-9-]+)_(.+)\.pdf", filename)
     if not match:
         return None
 

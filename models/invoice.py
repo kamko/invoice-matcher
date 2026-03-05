@@ -30,8 +30,12 @@ class Invoice:
 
     @property
     def is_wire(self) -> bool:
-        """Check if this is a wire transfer invoice."""
-        return self.payment_type == "wire"
+        """Check if this is a wire transfer invoice.
+
+        Includes: wire, sepa-debit, bank-transfer, etc.
+        """
+        wire_types = {"wire", "sepa-debit", "sepa", "bank", "bank-transfer", "transfer"}
+        return self.payment_type.lower() in wire_types
 
     @property
     def is_credit_note(self) -> bool:
