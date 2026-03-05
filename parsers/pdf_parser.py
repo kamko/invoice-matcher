@@ -65,32 +65,61 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
     amount = None
     vs = None
 
+    # 1. Try PDF text extraction
+    text = ""
     try:
         with pdfplumber.open(pdf_path) as pdf:
-            text = ""
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
                 text += page_text + "\n"
+    except Exception:
+        pass
 
-            # Try LLM extraction first (more accurate)
+    text_has_content = len(text.strip()) > 50  # More than just whitespace/headers
+
+    if text_has_content:
+        # TEXT PDF (invoice): LLM text -> regex
+
+        # Try LLM text extraction (cheap, accurate)
+        try:
+            from parsers.llm_extractor import extract_invoice_data_llm
+            llm_data = extract_invoice_data_llm(text)
+            if llm_data.get("amount"):
+                amount = llm_data["amount"]
+            if llm_data.get("vs"):
+                vs = llm_data["vs"]
+        except Exception:
+            pass
+
+        # Fallback to regex
+        if amount is None:
+            amount = extract_amount(text)
+        if vs is None:
+            vs = extract_vs(text)
+
+    else:
+        # IMAGE PDF FLOW: e-kasa -> LLM vision
+
+        # 3a. Try e-kasa QR first (FREE)
+        try:
+            from parsers.ekasa_parser import parse_ekasa_pdf
+            ekasa_receipt = parse_ekasa_pdf(pdf_path)
+            if ekasa_receipt:
+                amount = ekasa_receipt.total_price
+        except Exception:
+            pass
+
+        # 3b. If e-kasa didn't work, use LLM vision (expensive)
+        if amount is None or vs is None:
             try:
-                from parsers.llm_extractor import extract_invoice_data_llm
-                llm_data = extract_invoice_data_llm(text)
-                if llm_data.get("amount"):
+                from parsers.llm_extractor import extract_invoice_data_from_image
+                llm_data = extract_invoice_data_from_image(pdf_path)
+                if amount is None and llm_data.get("amount"):
                     amount = llm_data["amount"]
-                if llm_data.get("vs"):
+                if vs is None and llm_data.get("vs"):
                     vs = llm_data["vs"]
             except Exception:
                 pass
-
-            # Fallback to regex if LLM didn't extract
-            if amount is None:
-                amount = extract_amount(text)
-            if vs is None:
-                vs = extract_vs(text)
-    except Exception as e:
-        # If PDF parsing fails, continue with filename info only
-        pass
 
     return Invoice(
         file_path=pdf_path,
