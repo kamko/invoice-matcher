@@ -63,7 +63,34 @@ export function HomePage() {
   })
   const [selectedFolder, setSelectedFolder] = React.useState<MonthFolderInfo | null>(() => getMonthFolder(selectedMonth))
   const [showFolderPicker, setShowFolderPicker] = React.useState(false)
+  const [downloadingMonth, setDownloadingMonth] = React.useState<string | null>(null)
   const { startSync } = useSync()
+
+  const handleDownloadInvoices = async (yearMonth: string) => {
+    setDownloadingMonth(yearMonth)
+    try {
+      const response = await fetch(`/api/months/${yearMonth}/download-invoices`)
+      if (!response.ok) {
+        const err = await response.json()
+        alert(err.detail || "Failed to download")
+        return
+      }
+      // Create blob and download
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `invoices-${yearMonth}.zip`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (error) {
+      alert("Failed to download invoices")
+    } finally {
+      setDownloadingMonth(null)
+    }
+  }
 
   // Update folder when month changes
   React.useEffect(() => {
@@ -328,13 +355,18 @@ export function HomePage() {
                           size="sm"
                           className="h-8 w-8 p-0"
                           title="Download matched invoices"
+                          disabled={downloadingMonth === m.year_month}
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
-                            window.open(`/api/months/${m.year_month}/download-invoices`, "_blank")
+                            handleDownloadInvoices(m.year_month)
                           }}
                         >
-                          <Download className="h-4 w-4" />
+                          {downloadingMonth === m.year_month ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
                         </Button>
                       )}
                       <ChevronRight className="h-5 w-5 text-muted-foreground" />
