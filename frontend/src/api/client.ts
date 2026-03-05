@@ -207,6 +207,21 @@ export function useDeleteKnownTransaction() {
   })
 }
 
+export function useReapplyRules() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      fetchJson<{ success: boolean; months_updated: number; transactions_moved: number }>(
+        '/known-transactions/reapply-all',
+        { method: 'POST' }
+      ),
+    onSuccess: () => {
+      // Invalidate month data to refresh counts
+      queryClient.invalidateQueries({ queryKey: ['months'] })
+    },
+  })
+}
+
 // Reconciliation
 export function useStartReconciliation() {
   return useMutation({

@@ -1,10 +1,11 @@
 import * as React from "react"
-import { Plus, Pencil, Trash2, Loader2 } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2, RefreshCw } from "lucide-react"
 import {
   useKnownTransactions,
   useCreateKnownTransaction,
   useUpdateKnownTransaction,
   useDeleteKnownTransaction,
+  useReapplyRules,
   type KnownTransaction,
 } from "@/api/client"
 import {
@@ -34,9 +35,11 @@ export function RulesPage() {
   const createRule = useCreateKnownTransaction()
   const updateRule = useUpdateKnownTransaction()
   const deleteRule = useDeleteKnownTransaction()
+  const reapplyRules = useReapplyRules()
 
   const [editingRule, setEditingRule] = React.useState<KnownTransaction | null>(null)
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
+  const [reapplyResult, setReapplyResult] = React.useState<string | null>(null)
 
   // Form state
   const [formData, setFormData] = React.useState({
@@ -136,11 +139,43 @@ export function RulesPage() {
             Manage rules for automatically recognizing transactions
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Rule
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setReapplyResult(null)
+              reapplyRules.mutate(undefined, {
+                onSuccess: (data) => {
+                  setReapplyResult(
+                    `Moved ${data.transactions_moved} transaction(s) across ${data.months_updated} month(s)`
+                  )
+                },
+                onError: () => {
+                  setReapplyResult("Failed to reapply rules")
+                },
+              })
+            }}
+            disabled={reapplyRules.isPending}
+          >
+            {reapplyRules.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Reapply Rules
+          </Button>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Rule
+          </Button>
+        </div>
       </div>
+
+      {reapplyResult && (
+        <div className="bg-muted px-4 py-2 rounded-md text-sm">
+          {reapplyResult}
+        </div>
+      )}
 
       <div className="border rounded-lg">
         <Table>
