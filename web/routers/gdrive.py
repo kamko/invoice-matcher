@@ -184,3 +184,77 @@ async def upload_pdf(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rename")
+def rename_file(
+    file_id: str = Form(...),
+    new_filename: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Rename a file in Google Drive and update all references."""
+    from web.database.models import PDFCache, InvoicePayment, MonthlyReconciliation
+
+    if not _gdrive_service.is_available:
+        raise HTTPException(
+            status_code=503,
+            detail="Google Drive integration not configured"
+        )
+
+    if not _gdrive_service._credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated with Google Drive"
+        )
+
+    if not new_filename.lower().endswith('.pdf'):
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must end with .pdf"
+        )
+
+    try:
+        # Rename in Google Drive
+        _gdrive_service.rename_file(file_id, new_filename)
+
+        old_filename = None
+        affected_months = set()
+
+        # Update filename in PDFCache
+        cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+        if cached:
+            old_filename = cached.filename
+            cached.filename = new_filename
+
+        # Update InvoicePayment records
+        payments = db.query(InvoicePayment).filter(
+            InvoicePayment.gdrive_file_id == file_id
+        ).all()
+        for payment in payments:
+            payment.filename = new_filename
+            affected_months.add(payment.invoice_month)
+
+        # Mark affected months as needing resync (clear results so matching is re-done)
+        for year_month in affected_months:
+            month = db.query(MonthlyReconciliation).filter(
+                MonthlyReconciliation.year_month == year_month
+            ).first()
+            if month:
+                # Clear results to force re-matching on next sync
+                month.results_json = None
+                month.status = "pending"
+                month.matched_count = None
+                month.unmatched_count = None
+
+        db.commit()
+
+        return {
+            "success": True,
+            "file_id": file_id,
+            "old_filename": old_filename,
+            "new_filename": new_filename,
+            "affected_months": list(affected_months),
+            "needs_resync": True,  # Signal to frontend to resync
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

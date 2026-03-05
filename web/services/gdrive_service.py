@@ -24,10 +24,9 @@ except ImportError:
 class GDriveService:
     """Service for Google Drive operations."""
 
-    # Need both scopes: file for upload, readonly for listing folders outside our app
+    # Full drive scope for rename/modify operations on all files
     SCOPES = [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
     ]
 
     def __init__(self):
@@ -69,9 +68,8 @@ class GDriveService:
 
         auth_url, _ = self._pending_flow.authorization_url(
             access_type="offline",
-            include_granted_scopes="true",
             state=state,
-            prompt="consent",  # Force consent to get refresh token
+            prompt="consent",  # Force consent to get fresh scopes
         )
 
         return auth_url
@@ -408,6 +406,31 @@ class GDriveService:
         ).execute()
 
         return file.get("id")
+
+    def rename_file(self, file_id: str, new_name: str) -> bool:
+        """Rename a file in Google Drive.
+
+        Args:
+            file_id: The ID of the file to rename
+            new_name: The new filename
+
+        Returns:
+            True if successful
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        service.files().update(
+            fileId=file_id,
+            body={"name": new_name},
+        ).execute()
+
+        return True
 
     def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]], db=None) -> bytes:
         """Download multiple files from Google Drive and return as a zip.

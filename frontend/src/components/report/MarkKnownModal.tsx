@@ -47,7 +47,9 @@ export function MarkKnownModal({
 
   React.useEffect(() => {
     if (transaction) {
-      // Pre-fill patterns from transaction
+      // Reset and pre-fill patterns from transaction
+      setRuleType("note")
+      setReason("")
       setVendorPattern(transaction.counter_name || "")
       setAccountPattern(transaction.counter_account || "")
       // Extract keywords from note for pattern suggestion
@@ -56,6 +58,8 @@ export function MarkKnownModal({
       const words = note.split(/[\s|:,]+/).filter(w => w.length > 3)
       if (words.length > 0) {
         setNotePattern(words[0])
+      } else {
+        setNotePattern("")
       }
     }
   }, [transaction])

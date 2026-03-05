@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link } from "wouter"
 import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, type Transaction } from "@/api/client"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
@@ -29,6 +29,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const markKnown = useMarkKnownMonthly()
   const matchWithPdf = useMatchWithPdfMonthly()
   const uploadInvoice = useUploadInvoice()
+  const renameInvoice = useRenameInvoice()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
@@ -237,6 +238,12 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
           <FolderInvoicesTable
             invoices={invoicesData?.invoices || []}
             formatYearMonth={formatYearMonth}
+            onRename={async (fileId, newFilename) => {
+              await renameInvoice.mutateAsync({ fileId, newFilename })
+              // Refetch to show updated data - user can manually resync to rematch
+              refetch()
+            }}
+            isRenaming={renameInvoice.isPending}
           />
         </TabsContent>
       </Tabs>

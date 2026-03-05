@@ -418,10 +418,10 @@ async def monthly_reconcile_stream(
                         date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
                         amount=Decimal(t_data["amount"]),
                         currency=t_data["currency"],
-                        counter_account=t_data.get("counter_account"),
-                        counter_name=t_data.get("counter_name"),
-                        vs=t_data.get("vs"),
-                        note=t_data.get("note"),
+                        counter_account=t_data.get("counter_account") or "",
+                        counter_name=t_data.get("counter_name") or "",
+                        vs=t_data.get("vs") or "",
+                        note=t_data.get("note") or "",
                         transaction_type=t_data.get("transaction_type", "wire"),
                         raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
                     )
@@ -458,10 +458,10 @@ async def monthly_reconcile_stream(
                                 "date": str(t.date),
                                 "amount": str(t.amount),
                                 "currency": t.currency,
-                                "counter_account": t.counter_account,
-                                "counter_name": t.counter_name,
-                                "vs": t.vs,
-                                "note": t.note,
+                                "counter_account": t.counter_account or "",
+                                "counter_name": t.counter_name or "",
+                                "vs": t.vs or "",
+                                "note": t.note or "",
                                 "transaction_type": t.transaction_type,
                                 "raw_type": t.raw_type,
                             }
@@ -897,10 +897,10 @@ async def batch_sync_stream(
                             date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
                             amount=Decimal(t_data["amount"]),
                             currency=t_data["currency"],
-                            counter_account=t_data.get("counter_account"),
-                            counter_name=t_data.get("counter_name"),
-                            vs=t_data.get("vs"),
-                            note=t_data.get("note"),
+                            counter_account=t_data.get("counter_account") or "",
+                            counter_name=t_data.get("counter_name") or "",
+                            vs=t_data.get("vs") or "",
+                            note=t_data.get("note") or "",
                             transaction_type=t_data.get("transaction_type", "wire"),
                             raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
                         )
@@ -981,7 +981,15 @@ async def batch_sync_stream(
             invoices_by_month: dict[str, list] = {}
             file_id_maps: dict[str, dict] = {}
 
-            if parent_setting and parent_setting.value and _gdrive_service._credentials:
+            if not _gdrive_service._credentials:
+                yield send_event("error", {"message": "Not authenticated with Google Drive - please reconnect"})
+                return
+
+            if not parent_setting or not parent_setting.value:
+                yield send_event("error", {"message": "Invoice parent folder not configured"})
+                return
+
+            if parent_setting and parent_setting.value:
                 # Determine all folders we need (each month + previous month for first)
                 folders_to_download = set()
                 for ym in sorted_months:
@@ -1166,10 +1174,10 @@ async def batch_sync_stream(
                         "date": str(t.date),
                         "amount": str(t.amount),
                         "currency": t.currency,
-                        "counter_account": t.counter_account,
-                        "counter_name": t.counter_name,
-                        "vs": t.vs,
-                        "note": t.note,
+                        "counter_account": t.counter_account or "",
+                        "counter_name": t.counter_name or "",
+                        "vs": t.vs or "",
+                        "note": t.note or "",
                         "transaction_type": t.transaction_type,
                         "raw_type": t.raw_type,
                     }

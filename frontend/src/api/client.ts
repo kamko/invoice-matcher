@@ -468,6 +468,31 @@ export function useGDriveFolders(parentId: string, showAll = false) {
   })
 }
 
+export function useRenameInvoice() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ fileId, newFilename }: { fileId: string; newFilename: string }) => {
+      const formData = new FormData()
+      formData.append('file_id', fileId)
+      formData.append('new_filename', newFilename)
+      const response = await fetch(`${API_BASE}/gdrive/rename`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }))
+        throw new Error(err.detail || 'Failed to rename')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      // Invalidate queries that might show the filename
+      queryClient.invalidateQueries({ queryKey: ['months'] })
+      queryClient.invalidateQueries({ queryKey: ['month-detail'] })
+    },
+  })
+}
+
 // Settings
 export function useSettings() {
   return useQuery({

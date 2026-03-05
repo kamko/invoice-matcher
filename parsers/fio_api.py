@@ -104,9 +104,10 @@ def _classify_type(raw_type: str) -> str:
     if "kartou" in raw_type_lower or "card" in raw_type_lower:
         return "card"
 
-    # Wire transfers
+    # Wire transfers (including SEPA direct debit)
     if any(term in raw_type_lower for term in [
-        "platba", "prevod", "příjem", "europlatba", "bezhotovostní"
+        "platba", "prevod", "příjem", "europlatba", "bezhotovostní",
+        "sepa", "inkaso"
     ]):
         return "wire"
 

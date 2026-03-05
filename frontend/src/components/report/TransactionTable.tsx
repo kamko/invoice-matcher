@@ -1,4 +1,5 @@
-import { Upload, ExternalLink, Check, Clock, Undo2 } from "lucide-react"
+import * as React from "react"
+import { Upload, ExternalLink, Check, Clock, Undo2, Pencil } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -11,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Transaction, MatchResult, FolderInvoice } from "@/api/client"
+import { RenameInvoiceModal } from "./RenameInvoiceModal"
 
 interface MatchedTableProps {
   matches: MatchResult[]
@@ -294,9 +296,13 @@ export function IncomeTable({ transactions }: IncomeTableProps) {
 interface FolderInvoicesTableProps {
   invoices: FolderInvoice[]
   formatYearMonth: (ym: string) => string
+  onRename?: (fileId: string, newFilename: string) => Promise<void>
+  isRenaming?: boolean
 }
 
-export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoicesTableProps) {
+export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRenaming }: FolderInvoicesTableProps) {
+  const [renameInvoice, setRenameInvoice] = React.useState<FolderInvoice | null>(null)
+
   // Helper to detect credit notes from filename
   const isCreditNote = (filename: string) => {
     const lower = filename.toLowerCase()
@@ -342,17 +348,33 @@ export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoice
     )
   }
 
+  const handleRename = async (fileId: string, newFilename: string) => {
+    if (onRename) {
+      await onRename(fileId, newFilename)
+      setRenameInvoice(null)
+    }
+  }
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Filename</TableHead>
-          <TableHead>Vendor</TableHead>
-          <TableHead>Amount</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Settled In</TableHead>
-        </TableRow>
-      </TableHeader>
+    <>
+      <RenameInvoiceModal
+        invoice={renameInvoice}
+        open={renameInvoice !== null}
+        onOpenChange={(open) => !open && setRenameInvoice(null)}
+        onRename={handleRename}
+        isLoading={isRenaming}
+      />
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Filename</TableHead>
+            <TableHead>Vendor</TableHead>
+            <TableHead>Amount</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Settled In</TableHead>
+            {onRename && <TableHead className="w-[60px]">Actions</TableHead>}
+          </TableRow>
+        </TableHeader>
       <TableBody>
         {invoices.length === 0 ? (
           <TableRow>
@@ -390,10 +412,23 @@ export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoice
                   "-"
                 )}
               </TableCell>
+              {onRename && (
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRenameInvoice(inv)}
+                    title="Rename invoice"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))
         )}
       </TableBody>
     </Table>
+    </>
   )
 }

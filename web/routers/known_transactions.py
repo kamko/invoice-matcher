@@ -84,12 +84,12 @@ def apply_rule_to_existing_months(rule, db: Session):
                     date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
                     amount=Decimal(t_data["amount"]),
                     currency=t_data["currency"],
-                    counter_account=t_data.get("counter_account", ""),
-                    counter_name=t_data.get("counter_name", ""),
-                    vs=t_data.get("vs", ""),
-                    note=t_data.get("note", ""),
-                    transaction_type=t_data.get("transaction_type", "wire"),
-                    raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
+                    counter_account=t_data.get("counter_account") or "",
+                    counter_name=t_data.get("counter_name") or "",
+                    vs=t_data.get("vs") or "",
+                    note=t_data.get("note") or "",
+                    transaction_type=t_data.get("transaction_type") or "wire",
+                    raw_type=t_data.get("raw_type") or t_data.get("transaction_type") or "wire",
                 )
 
                 if service._matches_rule(t, rule):

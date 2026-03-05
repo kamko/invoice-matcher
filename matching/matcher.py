@@ -127,21 +127,26 @@ class Matcher:
         if invoice.is_credit_note:
             if transaction.amount <= 0:
                 return False  # Credit notes need positive transactions
-            # Type compatibility for credit notes
-            if transaction.is_card and invoice.is_card:
-                return True
-            if transaction.is_wire and invoice.is_wire:
-                return True
-            return False
+            # Credit note refunds often come back via different channels
+            # (e.g., card purchase refunded via wire transfer)
+            # So be lenient on type matching for credit notes - just check amount sign
+            return True
 
         # Regular invoices match with negative (expense) transactions only
         if transaction.amount > 0:
             return False  # Regular invoices need negative transactions
 
+        # Type compatibility checks
         if transaction.is_card and invoice.is_card:
             return True
         if transaction.is_wire and invoice.is_wire:
             return True
+
+        # Fallback: if transaction type is unknown/other, allow matching
+        # and let the scoring strategies determine compatibility
+        if transaction.transaction_type not in ("card", "wire", "fee"):
+            return True
+
         return False
 
     def _find_best_match(
