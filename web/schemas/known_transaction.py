@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class KnownTransactionBase(BaseModel):
     """Base schema for known transaction rules."""
 
-    rule_type: str = Field(..., pattern="^(exact|pattern|vendor|note)$")
+    rule_type: str = Field(..., pattern="^(exact|pattern|vendor|note|account)$")
     vendor_pattern: Optional[str] = None
     note_pattern: Optional[str] = None  # Regex pattern for note field
     amount: Optional[Decimal] = None
@@ -30,7 +30,7 @@ class KnownTransactionCreate(KnownTransactionBase):
 class KnownTransactionUpdate(BaseModel):
     """Schema for updating a known transaction rule."""
 
-    rule_type: Optional[str] = Field(None, pattern="^(exact|pattern|vendor|note)$")
+    rule_type: Optional[str] = Field(None, pattern="^(exact|pattern|vendor|note|account)$")
     vendor_pattern: Optional[str] = None
     note_pattern: Optional[str] = None
     amount: Optional[Decimal] = None

@@ -143,7 +143,7 @@ class MarkKnownRequest(BaseModel):
     """Request to mark a transaction as known."""
 
     transaction_id: str
-    rule_type: str = Field(..., pattern="^(exact|pattern|vendor|note)$")
+    rule_type: str = Field(..., pattern="^(exact|pattern|vendor|note|account)$")
     reason: str = Field(..., min_length=1, max_length=500)
     vendor_pattern: Optional[str] = None
     note_pattern: Optional[str] = None  # Regex pattern for note field
