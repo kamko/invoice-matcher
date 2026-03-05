@@ -72,8 +72,22 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
                 page_text = page.extract_text() or ""
                 text += page_text + "\n"
 
-            amount = extract_amount(text)
-            vs = extract_vs(text)
+            # Try LLM extraction first (more accurate)
+            try:
+                from parsers.llm_extractor import extract_invoice_data_llm
+                llm_data = extract_invoice_data_llm(text)
+                if llm_data.get("amount"):
+                    amount = llm_data["amount"]
+                if llm_data.get("vs"):
+                    vs = llm_data["vs"]
+            except Exception:
+                pass
+
+            # Fallback to regex if LLM didn't extract
+            if amount is None:
+                amount = extract_amount(text)
+            if vs is None:
+                vs = extract_vs(text)
     except Exception as e:
         # If PDF parsing fails, continue with filename info only
         pass
@@ -89,6 +103,29 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
     )
 
 
+def _normalize_amount(amount_str: str) -> Optional[Decimal]:
+    """
+    Normalize amount string to Decimal, handling various formats.
+
+    Handles: 1 647,00 | 1.647,00 | 1,647.00 | 1647.00 | 1647,00
+    """
+    # Remove spaces and non-breaking spaces
+    amount_str = amount_str.replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
+
+    # Determine decimal separator (last comma or period before 2 digits at end)
+    if re.match(r".*,\d{2}$", amount_str):
+        # European format: 1.234,56 or 1234,56
+        amount_str = amount_str.replace(".", "").replace(",", ".")
+    elif re.match(r".*\.\d{2}$", amount_str):
+        # US format: 1,234.56 or 1234.56
+        amount_str = amount_str.replace(",", "")
+
+    try:
+        return Decimal(amount_str)
+    except:
+        return None
+
+
 def extract_amount(text: str) -> Optional[Decimal]:
     """
     Extract the total amount from invoice text.
@@ -99,16 +136,20 @@ def extract_amount(text: str) -> Optional[Decimal]:
     Returns:
         Decimal amount or None
     """
+    # Amount pattern that handles thousands separators (space, dot, comma)
+    # Matches: 1 647,00 | 1.647,00 | 1,647.00 | 647.00 | 647,00
+    amount_pattern = r"[0-9]+(?:[\s\u00a0\u202f.,][0-9]{3})*[.,][0-9]{2}"
+
     # Look for common total patterns
     patterns = [
-        # "Total: 123.45 EUR" or "Total 123,45 EUR"
-        r"(?:Total|Celkom|Spolu|TOTAL|Suma|Amount|K\s*(?:ú|u)hrade|Zaplatit|Celkov)[\s:]*([0-9]+[.,][0-9]{2})\s*(?:EUR|€)?",
-        # "123.45 EUR" at line end
-        r"([0-9]+[.,][0-9]{2})\s*(?:EUR|€)\s*$",
-        # Amount with currency first "EUR 123.45"
-        r"(?:EUR|€)\s*([0-9]+[.,][0-9]{2})",
+        # "Total: 1 647,00 EUR" or "Total 1.647,00 EUR"
+        rf"(?:Total|Celkom|Spolu|TOTAL|Suma|Amount|K\s*(?:ú|u)hrade|Zaplatit|Celkov)[\s:]*({amount_pattern})\s*(?:EUR|€)?",
+        # "EUR 1 647,00" - currency first
+        rf"(?:EUR|€)\s*({amount_pattern})",
+        # "1 647,00 EUR" at line end
+        rf"({amount_pattern})\s*(?:EUR|€)\s*$",
         # Bold/emphasized amounts (often totals)
-        r"(?:celkem|total|suma).*?([0-9]+[.,][0-9]{2})",
+        rf"(?:celkem|total|suma).*?({amount_pattern})",
     ]
 
     amounts = []
@@ -116,28 +157,21 @@ def extract_amount(text: str) -> Optional[Decimal]:
     for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
         for match in matches:
-            try:
-                amount_str = match.replace(",", ".")
-                amount = Decimal(amount_str)
-                if amount > 0:
-                    amounts.append(amount)
-            except:
-                continue
+            amount = _normalize_amount(match)
+            if amount and amount > 0:
+                amounts.append(amount)
 
     # Return the largest amount found (usually the total)
     if amounts:
         return max(amounts)
 
     # Fallback: find any reasonable amount
-    all_amounts = re.findall(r"([0-9]+[.,][0-9]{2})", text)
+    all_amounts = re.findall(amount_pattern, text)
     parsed_amounts = []
     for amt_str in all_amounts:
-        try:
-            amt = Decimal(amt_str.replace(",", "."))
-            if amt > 0:
-                parsed_amounts.append(amt)
-        except:
-            continue
+        amt = _normalize_amount(amt_str)
+        if amt and amt > 0:
+            parsed_amounts.append(amt)
 
     if parsed_amounts:
         return max(parsed_amounts)
@@ -153,19 +187,22 @@ def extract_vs(text: str) -> Optional[str]:
         text: Full text extracted from PDF
 
     Returns:
-        Variable Symbol string or None
+        Variable Symbol string or None (digits only, slashes removed)
     """
-    # Common VS patterns
+    # Common VS patterns - allow digits, slashes, dashes
     patterns = [
-        r"(?:VS|Variable\s*Symbol|Variabiln(?:ý|i)\s*Symbol)[\s:]*(\d+)",
-        r"(?:Invoice|Fakt(?:ú|u)ra)[\s:#]*(\d+)",
-        r"(?:Reference|Ref)[\s:#]*(\d+)",
+        r"(?:VS|Variable\s*Symbol|Variabiln(?:ý|i)\s*Symbol)[\s:]*([\d/\-]+)",
+        r"(?:Invoice|Fakt(?:ú|u)ra)[\s:#]*([\d/\-]+)",
+        r"(?:Reference|Ref)[\s:#]*([\d/\-]+)",
     ]
 
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(1)
+            vs = match.group(1)
+            # Remove slashes/dashes for payment matching (VS must be numeric)
+            vs_clean = re.sub(r"[/\-]", "", vs)
+            return vs_clean if vs_clean else None
 
     return None
 

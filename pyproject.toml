@@ -24,6 +24,8 @@ dependencies = [
     "pyzbar>=0.1.9",
     "pillow>=12.1.1",
     "opencv-python>=4.13.0.92",
+    # LLM for invoice parsing (OpenRouter via OpenAI SDK)
+    "openai>=1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
