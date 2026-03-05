@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -763,3 +763,52 @@ async def match_with_pdf_monthly(
 
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+@router.get("/months/{year_month}/download-invoices")
+async def download_matched_invoices(
+    year_month: str,
+    db: Session = Depends(get_db)
+):
+    """Download all matched invoices as a zip file."""
+    reconcile_service = ReconcileService(db)
+    month = reconcile_service.get_month(year_month)
+
+    if not month:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    if not month.results_json:
+        raise HTTPException(status_code=400, detail="No results to download")
+
+    # Collect file IDs and names from matched invoices
+    matched = month.results_json.get("matched", [])
+    files_to_download = []
+
+    for match in matched:
+        invoice = match.get("invoice", {})
+        file_id = invoice.get("gdrive_file_id")
+        filename = invoice.get("filename")
+        if file_id and filename:
+            files_to_download.append((file_id, filename))
+
+    if not files_to_download:
+        raise HTTPException(
+            status_code=400,
+            detail="No invoices with Google Drive links found. Try resyncing the month."
+        )
+
+    if not _gdrive_service._credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated with Google Drive")
+
+    try:
+        zip_content = _gdrive_service.download_files_as_zip(files_to_download)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create zip: {str(e)}")
+
+    return Response(
+        content=zip_content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="invoices-{year_month}.zip"'
+        }
+    )

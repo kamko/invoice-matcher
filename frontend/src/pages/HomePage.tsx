@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
-import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink, CheckCircle2 } from "lucide-react"
+import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink, CheckCircle2, Download } from "lucide-react"
 import { useMonths, useGDriveStatus, useGDriveAuthUrl } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -322,6 +322,21 @@ export function HomePage() {
                       >
                         {m.status === "completed" && m.unmatched_count === 0 ? "complete" : m.status}
                       </Badge>
+                      {m.matched_count > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          title="Download matched invoices"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            window.open(`/api/months/${m.year_month}/download-invoices`, "_blank")
+                          }}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      )}
                       <ChevronRight className="h-5 w-5 text-muted-foreground" />
                     </div>
                   </div>

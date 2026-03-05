@@ -287,3 +287,45 @@ class GDriveService:
         ).execute()
 
         return file.get("id")
+
+    def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]]) -> bytes:
+        """Download multiple files from Google Drive and return as a zip.
+
+        Args:
+            file_ids_with_names: List of (file_id, filename) tuples
+
+        Returns:
+            Zip file contents as bytes
+        """
+        import zipfile
+
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        # Create zip in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for file_id, filename in file_ids_with_names:
+                try:
+                    # Download file content
+                    request = service.files().get_media(fileId=file_id)
+                    file_buffer = io.BytesIO()
+                    downloader = MediaIoBaseDownload(file_buffer, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+
+                    # Add to zip
+                    file_buffer.seek(0)
+                    zip_file.writestr(filename, file_buffer.read())
+                except Exception:
+                    # Skip files that fail to download
+                    continue
+
+        zip_buffer.seek(0)
+        return zip_buffer.read()
