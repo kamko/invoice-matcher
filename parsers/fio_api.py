@@ -78,13 +78,16 @@ def _convert_api_transaction(trans: dict) -> Optional[Transaction]:
         note_parts.append(trans["user_identification"])
     note = " | ".join(note_parts) if note_parts else ""
 
+    # Get counter account - prefer account_number_full, fallback to account_number (for IBANs)
+    counter_account = trans.get("account_number_full") or trans.get("account_number") or ""
+
     return Transaction(
         id=str(trans.get("transaction_id", "")),
         date=trans_date,
         amount=amount,
         currency=trans.get("currency", "EUR"),
-        counter_account=trans.get("account_number_full", ""),
-        counter_name=trans.get("account_name", ""),
+        counter_account=counter_account,
+        counter_name=trans.get("account_name") or trans.get("bank_name") or "",
         vs=trans.get("variable_symbol", "") or "",
         note=note,
         transaction_type=transaction_type,

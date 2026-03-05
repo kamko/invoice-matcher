@@ -46,8 +46,8 @@ export function MarkKnownModal({
   const [accountPattern, setAccountPattern] = React.useState("")
 
   React.useEffect(() => {
-    if (transaction) {
-      // Reset and pre-fill patterns from transaction
+    if (transaction && open) {
+      // Reset and pre-fill patterns from transaction when modal opens
       setRuleType("note")
       setReason("")
       setVendorPattern(transaction.counter_name || "")
@@ -62,7 +62,7 @@ export function MarkKnownModal({
         setNotePattern("")
       }
     }
-  }, [transaction])
+  }, [transaction, open])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
