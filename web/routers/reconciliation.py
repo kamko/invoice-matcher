@@ -19,8 +19,10 @@ from web.schemas.reconciliation import (
     MonthlyReconcileRequest,
     MonthResponse,
     MonthListItem,
+    SetFolderRequest,
 )
 from parsers.pdf_parser import parse_uploaded_pdf
+from web.database.models import MonthlyReconciliation, InvoicePayment, AppSettings
 from web.schemas.known_transaction import KnownTransactionCreate
 from web.services.reconcile_service import ReconcileService
 from web.services.known_trans_service import KnownTransactionService
@@ -83,7 +85,7 @@ def start_reconciliation(
                     detail="Not authenticated with Google Drive. Please connect first."
                 )
             try:
-                invoice_dir, downloaded_files = _gdrive_service.download_pdfs(request.gdrive_folder_id)
+                invoice_dir, downloaded_files, _ = _gdrive_service.download_pdfs(request.gdrive_folder_id, db, force_refresh=True)
                 if not downloaded_files:
                     raise HTTPException(
                         status_code=400,
@@ -421,9 +423,42 @@ def list_months(db: Session = Depends(get_db)):
             matched_count=m.matched_count,
             unmatched_count=m.unmatched_count,
             last_synced_at=m.last_synced_at,
+            gdrive_folder_id=m.gdrive_folder_id,
+            gdrive_folder_name=m.gdrive_folder_name,
         )
         for m in months
     ]
+
+
+@router.post("/months/{year_month}/set-folder")
+def set_month_folder(
+    year_month: str,
+    request: SetFolderRequest,
+    db: Session = Depends(get_db)
+):
+    """Set Google Drive folder for a month."""
+    # Treat empty strings as clearing the folder
+    folder_id = request.folder_id if request.folder_id else None
+    folder_name = request.folder_name if request.folder_name else None
+
+    # Get or create month record
+    month = db.query(MonthlyReconciliation).filter(
+        MonthlyReconciliation.year_month == year_month
+    ).first()
+
+    if not month:
+        month = MonthlyReconciliation(
+            year_month=year_month,
+            gdrive_folder_id=folder_id,
+            gdrive_folder_name=folder_name,
+        )
+        db.add(month)
+    else:
+        month.gdrive_folder_id = folder_id
+        month.gdrive_folder_name = folder_name
+
+    db.commit()
+    return {"success": True, "year_month": year_month, "folder_id": folder_id}
 
 
 @router.post("/months/{year_month}/sync", response_model=ReconcileResponse)
@@ -463,7 +498,7 @@ def sync_month(
                     detail="Not authenticated with Google Drive. Please connect first."
                 )
             try:
-                invoice_dir, downloaded_files = _gdrive_service.download_pdfs(request.gdrive_folder_id)
+                invoice_dir, downloaded_files, _ = _gdrive_service.download_pdfs(request.gdrive_folder_id, db, force_refresh=True)
                 # Don't error if no files - might all be late payments
             except Exception as e:
                 raise HTTPException(
@@ -478,8 +513,8 @@ def sync_month(
     elif request.prev_month_gdrive_folder_id:
         if _gdrive_service.is_available and _gdrive_service._credentials:
             try:
-                prev_month_invoice_dir, prev_files = _gdrive_service.download_pdfs(
-                    request.prev_month_gdrive_folder_id
+                prev_month_invoice_dir, prev_files, _ = _gdrive_service.download_pdfs(
+                    request.prev_month_gdrive_folder_id, db, force_refresh=True
                 )
                 print(f"[SYNC] Downloaded {len(prev_files)} files from prev month folder")
             except Exception as e:
@@ -770,38 +805,37 @@ async def download_matched_invoices(
     year_month: str,
     db: Session = Depends(get_db)
 ):
-    """Download all matched invoices as a zip file."""
+    """Download all invoices from the month's Google Drive folder as a zip file.
+
+    Downloads ALL PDFs from the folder (for VAT purposes), not just matched ones.
+    This ensures invoices are included based on their folder location (VAT date),
+    regardless of which month the payment was made.
+    """
     reconcile_service = ReconcileService(db)
     month = reconcile_service.get_month(year_month)
 
     if not month:
         raise HTTPException(status_code=404, detail="Month not found")
 
-    if not month.results_json:
-        raise HTTPException(status_code=400, detail="No results to download")
-
-    # Collect file IDs and names from matched invoices
-    matched = month.results_json.get("matched", [])
-    files_to_download = []
-
-    for match in matched:
-        invoice = match.get("invoice", {})
-        file_id = invoice.get("gdrive_file_id")
-        filename = invoice.get("filename")
-        if file_id and filename:
-            files_to_download.append((file_id, filename))
-
-    if not files_to_download:
-        raise HTTPException(
-            status_code=400,
-            detail="No invoices with Google Drive links found. Try resyncing the month."
-        )
+    if not month.gdrive_folder_id:
+        raise HTTPException(status_code=400, detail="No Google Drive folder set for this month")
 
     if not _gdrive_service._credentials:
         raise HTTPException(status_code=401, detail="Not authenticated with Google Drive")
 
     try:
-        zip_content = _gdrive_service.download_files_as_zip(files_to_download)
+        # List all PDF files in the folder
+        files = _gdrive_service.list_pdfs(month.gdrive_folder_id)
+
+        if not files:
+            raise HTTPException(status_code=400, detail="No PDF files found in the folder")
+
+        # Create list of (file_id, filename) tuples
+        files_to_download = [(f["id"], f["name"]) for f in files]
+
+        zip_content = _gdrive_service.download_files_as_zip(files_to_download, db)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create zip: {str(e)}")
 
@@ -812,3 +846,175 @@ async def download_matched_invoices(
             "Content-Disposition": f'attachment; filename="invoices-{year_month}.zip"'
         }
     )
+
+
+@router.get("/months/{year_month}/invoices")
+def get_month_invoices(
+    year_month: str,
+    db: Session = Depends(get_db)
+):
+    """Get all invoices for a month with their payment status.
+
+    Returns invoices from this month's folder, indicating whether they've been paid
+    and in which month the payment occurred.
+    """
+    # Get all invoice payments for this month (invoices stored in this month's folder)
+    payments = db.query(InvoicePayment).filter(
+        InvoicePayment.invoice_month == year_month
+    ).all()
+
+    invoices = []
+    for p in payments:
+        invoices.append({
+            "gdrive_file_id": p.gdrive_file_id,
+            "filename": p.filename,
+            "vendor": p.vendor,
+            "amount": str(p.amount) if p.amount else None,
+            "status": "paid" if p.paid_month else "unpaid",
+            "paid_month": p.paid_month,
+            "transaction_id": p.transaction_id,
+        })
+
+    return {"invoices": invoices, "total": len(invoices)}
+
+
+@router.post("/months/{year_month}/upload-invoice")
+async def upload_invoice_to_month(
+    year_month: str,
+    file: UploadFile = File(...),
+    invoice_date: str = Form(...),  # YYYY-MM-DD format for invoice/VAT date
+    db: Session = Depends(get_db)
+):
+    """Upload a new invoice to a month's Google Drive folder.
+
+    Args:
+        year_month: The month to upload to (YYYY-MM format)
+        file: PDF file to upload
+        invoice_date: The invoice/VAT date (used for filename prefix)
+    """
+    from datetime import datetime
+
+    # Validate year_month format
+    try:
+        y, m = map(int, year_month.split("-"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid year_month format. Use YYYY-MM")
+
+    # Parse invoice_date
+    try:
+        inv_date = datetime.strptime(invoice_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid invoice_date format. Use YYYY-MM-DD")
+
+    # Get month record
+    month = db.query(MonthlyReconciliation).filter(
+        MonthlyReconciliation.year_month == year_month
+    ).first()
+
+    if not month:
+        raise HTTPException(status_code=404, detail=f"Month {year_month} not found")
+
+    # Get folder ID - either from month record or auto-resolve from parent
+    folder_id = month.gdrive_folder_id
+
+    if not folder_id:
+        # Try to auto-resolve from parent folder setting
+        parent_setting = db.query(AppSettings).filter(
+            AppSettings.key == "invoice_parent_folder_id"
+        ).first()
+
+        if parent_setting and parent_setting.value:
+            subfolder_name = f"{y}{m:02d}"
+            subfolder = _gdrive_service.find_subfolder(parent_setting.value, subfolder_name)
+            if subfolder:
+                folder_id = subfolder.id
+                month.gdrive_folder_id = folder_id
+                month.gdrive_folder_name = subfolder.name
+                db.commit()
+
+    if not folder_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No Google Drive folder configured for this month"
+        )
+
+    if not _gdrive_service.is_available:
+        raise HTTPException(status_code=503, detail="Google Drive not available")
+
+    if not _gdrive_service._credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated with Google Drive")
+
+    # Read file content
+    content = await file.read()
+
+    # Create filename with date prefix: YYYY-MM-DD_originalname.pdf
+    original_filename = file.filename or "invoice.pdf"
+    # Remove .pdf extension if present, then add it back
+    base_name = original_filename[:-4] if original_filename.lower().endswith(".pdf") else original_filename
+    new_filename = f"{inv_date.strftime('%Y-%m-%d')}_{base_name}.pdf"
+
+    try:
+        # Upload to Google Drive
+        gdrive_file_id = _gdrive_service.upload_pdf(folder_id, new_filename, content)
+
+        # Cache the PDF
+        from web.database.models import PDFCache
+        cache_entry = PDFCache(
+            gdrive_file_id=gdrive_file_id,
+            filename=new_filename,
+            content=content,
+            file_size=len(content),
+        )
+        db.add(cache_entry)
+
+        # Create invoice payment record (unpaid initially)
+        payment = InvoicePayment(
+            invoice_month=year_month,
+            gdrive_file_id=gdrive_file_id,
+            filename=new_filename,
+            paid_month=None,
+            transaction_id=None,
+            amount=None,
+            vendor=None,
+        )
+        db.add(payment)
+        db.commit()
+
+        return {
+            "success": True,
+            "gdrive_file_id": gdrive_file_id,
+            "filename": new_filename,
+            "message": f"Invoice uploaded to {year_month}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload: {str(e)}")
+
+
+# ===== Settings Endpoints =====
+
+@router.get("/settings")
+def get_settings(db: Session = Depends(get_db)):
+    """Get all app settings."""
+    settings = db.query(AppSettings).all()
+    return {s.key: s.value for s in settings}
+
+
+@router.get("/settings/{key}")
+def get_setting(key: str, db: Session = Depends(get_db)):
+    """Get a specific setting."""
+    setting = db.query(AppSettings).filter(AppSettings.key == key).first()
+    return {"key": key, "value": setting.value if setting else None}
+
+
+@router.put("/settings/{key}")
+def set_setting(key: str, value: str = "", db: Session = Depends(get_db)):
+    """Set a setting value."""
+    setting = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if setting:
+        setting.value = value if value else None
+    else:
+        setting = AppSettings(key=key, value=value if value else None)
+        db.add(setting)
+    db.commit()
+    return {"key": key, "value": setting.value}

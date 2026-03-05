@@ -180,8 +180,75 @@ class GDriveService:
         folders.sort(key=lambda f: f.name.lower())
         return folders
 
-    def download_pdfs(self, folder_id: str) -> Tuple[Path, List[str], Dict[str, str]]:
-        """Download all PDFs from a folder.
+    def find_subfolder(self, parent_id: str, folder_name: str) -> Optional[GDriveFolder]:
+        """Find a subfolder by name within a parent folder.
+
+        Args:
+            parent_id: ID of the parent folder
+            folder_name: Name of the subfolder to find (e.g., "202602")
+
+        Returns:
+            GDriveFolder if found, None otherwise
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        query = f"'{parent_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+
+        results = service.files().list(
+            q=query,
+            pageSize=1,
+            fields="files(id, name, parents)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+
+        files = results.get("files", [])
+        if files:
+            item = files[0]
+            return GDriveFolder(
+                id=item["id"],
+                name=item["name"],
+                parent_id=item.get("parents", [None])[0] if item.get("parents") else None,
+            )
+        return None
+
+    def list_pdfs(self, folder_id: str) -> List[Dict[str, str]]:
+        """List all PDF files in a folder without downloading.
+
+        Returns:
+            List of dicts with 'id' and 'name' keys.
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        query = f"'{folder_id}' in parents and mimeType='application/pdf' and trashed=false"
+
+        results = service.files().list(
+            q=query,
+            pageSize=100,
+            fields="files(id, name)",
+        ).execute()
+
+        return results.get("files", [])
+
+    def download_pdfs(self, folder_id: str, db=None, force_refresh: bool = False) -> Tuple[Path, List[str], Dict[str, str]]:
+        """Download all PDFs from a folder, using cache when available.
+
+        Args:
+            folder_id: Google Drive folder ID
+            db: Optional SQLAlchemy session for caching PDFs
+            force_refresh: If True, always download from Google Drive (bypasses cache read, but still updates cache)
 
         Returns:
             Tuple of (directory_path, list_of_filenames, dict_mapping_filename_to_file_id)
@@ -198,34 +265,88 @@ class GDriveService:
         session_dir = self._download_dir / folder_id
         session_dir.mkdir(exist_ok=True)
 
-        # List PDF files in folder
+        # List PDF files in folder with MD5 checksums
         query = f"'{folder_id}' in parents and mimeType='application/pdf' and trashed=false"
 
         results = service.files().list(
             q=query,
             pageSize=100,
-            fields="files(id, name)",
+            fields="files(id, name, md5Checksum)",
         ).execute()
 
         downloaded_files = []
         file_id_map = {}  # filename -> gdrive file id
+        cache_hits = 0
+        cache_misses = 0
+
+        # Import here to avoid circular imports
+        if db:
+            from web.database.models import PDFCache
+            from datetime import datetime
 
         for item in results.get("files", []):
             file_id = item["id"]
             file_name = item["name"]
+            md5_checksum = item.get("md5Checksum")
             file_path = session_dir / file_name
 
-            # Download file
-            request = service.files().get_media(fileId=file_id)
+            content = None
 
-            with open(file_path, "wb") as f:
-                downloader = MediaIoBaseDownload(f, request)
+            # Check cache first (unless force_refresh is True)
+            if db and not force_refresh:
+                cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                if cached:
+                    # Verify checksum if available
+                    if md5_checksum is None or cached.md5_checksum == md5_checksum:
+                        # Cache hit - use cached content
+                        content = cached.content
+                        cached.last_accessed_at = datetime.utcnow()
+                        cache_hits += 1
+
+            if content is None:
+                # Cache miss - download from Google Drive
+                request = service.files().get_media(fileId=file_id)
+                file_buffer = io.BytesIO()
+                downloader = MediaIoBaseDownload(file_buffer, request)
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
 
+                file_buffer.seek(0)
+                content = file_buffer.read()
+                cache_misses += 1
+
+                # Store in cache
+                if db:
+                    from datetime import datetime
+                    existing = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                    if existing:
+                        existing.content = content
+                        existing.filename = file_name
+                        existing.file_size = len(content)
+                        existing.md5_checksum = md5_checksum
+                        existing.cached_at = datetime.utcnow()
+                        existing.last_accessed_at = datetime.utcnow()
+                    else:
+                        cache_entry = PDFCache(
+                            gdrive_file_id=file_id,
+                            filename=file_name,
+                            content=content,
+                            file_size=len(content),
+                            md5_checksum=md5_checksum,
+                        )
+                        db.add(cache_entry)
+
+            # Write to disk for parsing
+            with open(file_path, "wb") as f:
+                f.write(content)
+
             downloaded_files.append(file_name)
             file_id_map[file_name] = file_id
+
+        # Commit cache updates
+        if db:
+            db.commit()
 
         return session_dir, downloaded_files, file_id_map
 
@@ -288,11 +409,14 @@ class GDriveService:
 
         return file.get("id")
 
-    def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]]) -> bytes:
+    def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]], db=None) -> bytes:
         """Download multiple files from Google Drive and return as a zip.
+
+        Uses cache when available to speed up downloads.
 
         Args:
             file_ids_with_names: List of (file_id, filename) tuples
+            db: Optional SQLAlchemy session for cache access
 
         Returns:
             Zip file contents as bytes
@@ -307,25 +431,64 @@ class GDriveService:
 
         service = build("drive", "v3", credentials=self._credentials)
 
+        # Import for cache access
+        if db:
+            from web.database.models import PDFCache
+            from datetime import datetime
+
         # Create zip in memory
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for file_id, filename in file_ids_with_names:
                 try:
-                    # Download file content
-                    request = service.files().get_media(fileId=file_id)
-                    file_buffer = io.BytesIO()
-                    downloader = MediaIoBaseDownload(file_buffer, request)
-                    done = False
-                    while not done:
-                        _, done = downloader.next_chunk()
+                    content = None
+
+                    # Check cache first
+                    if db:
+                        cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                        if cached:
+                            content = cached.content
+                            cached.last_accessed_at = datetime.utcnow()
+
+                    if content is None:
+                        # Download file content from Google Drive
+                        request = service.files().get_media(fileId=file_id)
+                        file_buffer = io.BytesIO()
+                        downloader = MediaIoBaseDownload(file_buffer, request)
+                        done = False
+                        while not done:
+                            _, done = downloader.next_chunk()
+
+                        file_buffer.seek(0)
+                        content = file_buffer.read()
+
+                        # Store in cache
+                        if db:
+                            existing = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                            if existing:
+                                existing.content = content
+                                existing.filename = filename
+                                existing.file_size = len(content)
+                                existing.cached_at = datetime.utcnow()
+                                existing.last_accessed_at = datetime.utcnow()
+                            else:
+                                cache_entry = PDFCache(
+                                    gdrive_file_id=file_id,
+                                    filename=filename,
+                                    content=content,
+                                    file_size=len(content),
+                                )
+                                db.add(cache_entry)
 
                     # Add to zip
-                    file_buffer.seek(0)
-                    zip_file.writestr(filename, file_buffer.read())
+                    zip_file.writestr(filename, content)
                 except Exception:
                     # Skip files that fail to download
                     continue
+
+        # Commit cache updates
+        if db:
+            db.commit()
 
         zip_buffer.seek(0)
         return zip_buffer.read()

@@ -2,8 +2,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
+from sqlalchemy.orm import Session
+
+from web.database import get_db
 
 from web.schemas.gdrive import (
     GDriveAuthUrl,
@@ -120,7 +123,7 @@ def list_folders(parent_id: str = "root", all: bool = False):
 
 
 @router.post("/download", response_model=GDriveDownloadResponse)
-def download_pdfs(request: GDriveDownloadRequest):
+def download_pdfs(request: GDriveDownloadRequest, db: Session = Depends(get_db)):
     """Download all PDFs from a Google Drive folder."""
     if not _gdrive_service.is_available:
         raise HTTPException(
@@ -135,7 +138,7 @@ def download_pdfs(request: GDriveDownloadRequest):
         )
 
     try:
-        download_path, files = _gdrive_service.download_pdfs(request.folder_id)
+        download_path, files, _ = _gdrive_service.download_pdfs(request.folder_id, db)
         return GDriveDownloadResponse(
             success=True,
             download_path=str(download_path),

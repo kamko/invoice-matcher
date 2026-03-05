@@ -61,6 +61,7 @@ export interface Invoice {
   vendor: string
   amount?: string
   vs?: string
+  gdrive_file_id?: string
 }
 
 export interface MatchResult {
@@ -137,6 +138,8 @@ export interface MonthListItem {
   matched_count: number
   unmatched_count: number
   last_synced_at?: string
+  gdrive_folder_id?: string
+  gdrive_folder_name?: string
 }
 
 export interface MarkKnownRequest {
@@ -302,6 +305,24 @@ export function useMonth(yearMonth: string | null) {
   })
 }
 
+export interface FolderInvoice {
+  gdrive_file_id: string
+  filename: string
+  vendor?: string
+  amount?: string
+  status: 'paid' | 'unpaid'
+  paid_month?: string
+  transaction_id?: string
+}
+
+export function useMonthInvoices(yearMonth: string | null) {
+  return useQuery({
+    queryKey: ['month-invoices', yearMonth],
+    queryFn: () => fetchJson<{ invoices: FolderInvoice[]; total: number }>(`/months/${yearMonth}/invoices`),
+    enabled: yearMonth !== null,
+  })
+}
+
 export function useSyncMonth() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -362,6 +383,63 @@ export function useMatchWithPdfMonthly() {
   })
 }
 
+export function useSetMonthFolder() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ yearMonth, folderId, folderName }: {
+      yearMonth: string
+      folderId: string
+      folderName: string
+    }) =>
+      fetchJson<{ success: boolean }>(`/months/${yearMonth}/set-folder`, {
+        method: 'POST',
+        body: JSON.stringify({ folder_id: folderId, folder_name: folderName }),
+      }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+      queryClient.invalidateQueries({ queryKey: ['months'] })
+    },
+  })
+}
+
+export interface UploadInvoiceResponse {
+  success: boolean
+  gdrive_file_id: string
+  filename: string
+  message: string
+}
+
+export function useUploadInvoice() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ yearMonth, file, invoiceDate }: {
+      yearMonth: string
+      file: File
+      invoiceDate: string  // YYYY-MM-DD format
+    }): Promise<UploadInvoiceResponse> => {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('invoice_date', invoiceDate)
+
+      const response = await fetch(`/api/months/${yearMonth}/upload-invoice`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+      queryClient.invalidateQueries({ queryKey: ['month-invoices', variables.yearMonth] })
+    },
+  })
+}
+
 // Google Drive
 export function useGDriveStatus() {
   return useQuery({
@@ -384,5 +462,33 @@ export function useGDriveFolders(parentId: string, showAll = false) {
         `/gdrive/folders?parent_id=${parentId}&all=${showAll}`
       ),
     enabled: !!parentId, // Only fetch when parentId is provided
+  })
+}
+
+// Settings
+export function useSettings() {
+  return useQuery({
+    queryKey: ['settings'],
+    queryFn: () => fetchJson<Record<string, string | null>>('/settings'),
+  })
+}
+
+export function useSetting(key: string) {
+  return useQuery({
+    queryKey: ['settings', key],
+    queryFn: () => fetchJson<{ key: string; value: string | null }>(`/settings/${key}`),
+  })
+}
+
+export function useSetSetting() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) =>
+      fetchJson<{ key: string; value: string | null }>(`/settings/${key}?value=${encodeURIComponent(value)}`, {
+        method: 'PUT',
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    },
   })
 }

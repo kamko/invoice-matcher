@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from web.database import get_db
-from web.database.models import ReconciliationSession
+from web.database.models import ReconciliationSession, InvoicePayment
 from web.services.known_trans_service import KnownTransactionService
 from web.routers.gdrive import _gdrive_service
 from web.config import DATA_DIR
@@ -124,9 +124,11 @@ async def reconcile_stream(
 
                 if _gdrive_service._credentials:
                     try:
-                        invoice_dir, files = await asyncio.to_thread(
+                        invoice_dir, files, _ = await asyncio.to_thread(
                             _gdrive_service.download_pdfs,
-                            request.gdrive_folder_id
+                            request.gdrive_folder_id,
+                            db,
+                            True  # force_refresh for sync
                         )
                         yield send_event("progress", {
                             "step": "downloaded",
@@ -323,6 +325,12 @@ class MonthlyReconcileSSERequest(BaseModel):
     invoice_dir: str | None = None
 
 
+class BatchSyncRequest(BaseModel):
+    """Request to sync multiple months at once."""
+    months: list[str]  # List of year-month strings, e.g., ["2026-01", "2026-02", "2026-03"]
+    fio_token: str
+
+
 @router.post("/months/{year_month}/sync-stream")
 async def monthly_reconcile_stream(
     year_month: str,
@@ -331,7 +339,7 @@ async def monthly_reconcile_stream(
 ):
     """Stream monthly reconciliation progress via SSE."""
     from calendar import monthrange
-    from web.database.models import MonthlyReconciliation
+    from web.database.models import MonthlyReconciliation, AppSettings
 
     async def generate() -> AsyncGenerator[str, None]:
         try:
@@ -339,7 +347,28 @@ async def monthly_reconcile_stream(
             year, mon = map(int, year_month.split("-"))
             from_date = datetime(year, mon, 1).date()
             last_day = monthrange(year, mon)[1]
-            to_date = datetime(year, mon, last_day).date()
+            end_of_month = datetime(year, mon, last_day).date()
+            # Use today if it's the current month, otherwise use end of month
+            today = datetime.now().date()
+            to_date = min(end_of_month, today) if today >= from_date else end_of_month
+
+            # Auto-resolve folder from parent folder setting
+            folder_id = request.gdrive_folder_id
+            folder_name = None
+
+            if not folder_id and _gdrive_service._credentials:
+                # Check for parent folder setting
+                parent_setting = db.query(AppSettings).filter(
+                    AppSettings.key == "invoice_parent_folder_id"
+                ).first()
+
+                if parent_setting and parent_setting.value:
+                    # Look for YYYYMM subfolder
+                    subfolder_name = f"{year}{mon:02d}"
+                    subfolder = _gdrive_service.find_subfolder(parent_setting.value, subfolder_name)
+                    if subfolder:
+                        folder_id = subfolder.id
+                        folder_name = subfolder.name
 
             # Get or create month record
             month = db.query(MonthlyReconciliation).filter(
@@ -349,7 +378,8 @@ async def monthly_reconcile_stream(
             if not month:
                 month = MonthlyReconciliation(
                     year_month=year_month,
-                    gdrive_folder_id=request.gdrive_folder_id,
+                    gdrive_folder_id=folder_id,
+                    gdrive_folder_name=folder_name,
                     status="processing"
                 )
                 db.add(month)
@@ -357,45 +387,122 @@ async def monthly_reconcile_stream(
                 db.refresh(month)
             else:
                 month.status = "processing"
-                if request.gdrive_folder_id:
-                    month.gdrive_folder_id = request.gdrive_folder_id
+                if folder_id:
+                    month.gdrive_folder_id = folder_id
+                if folder_name:
+                    month.gdrive_folder_name = folder_name
                 db.commit()
 
             yield send_event("started", {"year_month": year_month})
             yield send_event("progress", {"step": "started", "message": f"Starting reconciliation for {year_month}..."})
             await asyncio.sleep(0.1)
 
-            # Step 1: Fetch transactions
-            yield send_event("progress", {"step": "fetching", "message": "Fetching transactions from Fio Bank..."})
-            await asyncio.sleep(0.1)
+            # Step 1: Fetch transactions (use cache for past months)
+            is_past_month = to_date < today
+            use_cache = is_past_month and month.transactions_json is not None
 
-            try:
-                transactions = await asyncio.to_thread(
-                    fetch_transactions_from_api,
-                    request.fio_token.strip(),
-                    from_date,
-                    to_date
-                )
+            if use_cache:
+                # Use cached transactions for past months
+                yield send_event("progress", {"step": "fetching", "message": "Using cached transactions (past month)..."})
+                await asyncio.sleep(0.1)
+
+                # Reconstruct Transaction objects from cache
+                cached_data = month.transactions_json
+                transactions = []
+                for t_data in cached_data:
+                    from decimal import Decimal
+                    t = Transaction(
+                        id=t_data["id"],
+                        date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
+                        amount=Decimal(t_data["amount"]),
+                        currency=t_data["currency"],
+                        counter_account=t_data.get("counter_account"),
+                        counter_name=t_data.get("counter_name"),
+                        vs=t_data.get("vs"),
+                        note=t_data.get("note"),
+                        transaction_type=t_data.get("transaction_type", "wire"),
+                    )
+                    transactions.append(t)
+
                 yield send_event("progress", {
                     "step": "fetched",
-                    "message": f"Found {len(transactions)} transactions",
+                    "message": f"Loaded {len(transactions)} cached transactions",
                     "count": len(transactions)
                 })
-            except Exception as e:
-                error_msg = sanitize_error(e)
-                yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
-                month.status = "failed"
-                month.error_message = error_msg
-                db.commit()
-                return
+            else:
+                # Fetch from Fio API
+                yield send_event("progress", {"step": "fetching", "message": "Fetching transactions from Fio Bank..."})
+                await asyncio.sleep(0.1)
+
+                try:
+                    transactions = await asyncio.to_thread(
+                        fetch_transactions_from_api,
+                        request.fio_token.strip(),
+                        from_date,
+                        to_date
+                    )
+                    yield send_event("progress", {
+                        "step": "fetched",
+                        "message": f"Found {len(transactions)} transactions",
+                        "count": len(transactions)
+                    })
+
+                    # Cache transactions for future syncs (only for past months)
+                    if is_past_month:
+                        month.transactions_json = [
+                            {
+                                "id": t.id,
+                                "date": str(t.date),
+                                "amount": str(t.amount),
+                                "currency": t.currency,
+                                "counter_account": t.counter_account,
+                                "counter_name": t.counter_name,
+                                "vs": t.vs,
+                                "note": t.note,
+                                "transaction_type": t.transaction_type,
+                            }
+                            for t in transactions
+                        ]
+                except Exception as e:
+                    error_msg = sanitize_error(e)
+                    yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
+                    month.status = "failed"
+                    month.error_message = error_msg
+                    db.commit()
+                    return
 
             await asyncio.sleep(0.1)
 
             # Step 2: Get invoices from current month folder
             invoices = []
             file_id_map = {}  # filename -> gdrive file id
+            invoice_source_month = {}  # gdrive_file_id -> source month (for tracking)
 
-            if request.gdrive_folder_id:
+            # Helper to calculate previous month
+            def get_prev_month(ym: str) -> str:
+                y, m = map(int, ym.split("-"))
+                prev_date = datetime(y, m, 1) - __import__('datetime').timedelta(days=1)
+                return f"{prev_date.year}-{prev_date.month:02d}"
+
+            prev_month = get_prev_month(year_month)
+
+            # Auto-resolve previous month folder from parent folder setting
+            prev_month_folder_id = request.prev_month_gdrive_folder_id
+            if not prev_month_folder_id and _gdrive_service._credentials:
+                parent_setting = db.query(AppSettings).filter(
+                    AppSettings.key == "invoice_parent_folder_id"
+                ).first()
+                if parent_setting and parent_setting.value:
+                    prev_y, prev_m = map(int, prev_month.split("-"))
+                    prev_subfolder_name = f"{prev_y}{prev_m:02d}"
+                    prev_subfolder = _gdrive_service.find_subfolder(parent_setting.value, prev_subfolder_name)
+                    if prev_subfolder:
+                        prev_month_folder_id = prev_subfolder.id
+
+            # Use resolved folder_id (from earlier auto-resolution or request)
+            current_folder_id = folder_id or month.gdrive_folder_id
+
+            if current_folder_id:
                 yield send_event("progress", {"step": "downloading", "message": "Downloading invoices from Google Drive..."})
                 await asyncio.sleep(0.1)
 
@@ -403,7 +510,9 @@ async def monthly_reconcile_stream(
                     try:
                         invoice_dir, files, curr_file_id_map = await asyncio.to_thread(
                             _gdrive_service.download_pdfs,
-                            request.gdrive_folder_id
+                            current_folder_id,
+                            db,
+                            True  # force_refresh for sync
                         )
                         file_id_map.update(curr_file_id_map)
                         yield send_event("progress", {
@@ -415,9 +524,12 @@ async def monthly_reconcile_stream(
                         # Parse current month invoices
                         if invoice_dir:
                             curr_invoices = await asyncio.to_thread(parse_invoices, invoice_dir)
-                            # Set gdrive_file_id on each invoice
+                            # Set gdrive_file_id and source month on each invoice
                             for inv in curr_invoices:
                                 inv.gdrive_file_id = file_id_map.get(inv.filename)
+                                inv.source_month = year_month  # Track which folder this came from
+                                if inv.gdrive_file_id:
+                                    invoice_source_month[inv.gdrive_file_id] = year_month
                             invoices.extend(curr_invoices)
                     except Exception as e:
                         yield send_event("progress", {"step": "download_warning", "message": f"Warning: {sanitize_error(e)}"})
@@ -429,7 +541,7 @@ async def monthly_reconcile_stream(
                     return
 
             # Step 2b: Get invoices from previous month folder (for late payments)
-            if request.prev_month_gdrive_folder_id:
+            if prev_month_folder_id:
                 yield send_event("progress", {"step": "downloading_prev", "message": "Downloading previous month invoices..."})
                 await asyncio.sleep(0.1)
 
@@ -437,14 +549,19 @@ async def monthly_reconcile_stream(
                     try:
                         prev_invoice_dir, prev_files, prev_file_id_map = await asyncio.to_thread(
                             _gdrive_service.download_pdfs,
-                            request.prev_month_gdrive_folder_id
+                            prev_month_folder_id,
+                            db,
+                            True  # force_refresh for sync
                         )
                         file_id_map.update(prev_file_id_map)
                         if prev_invoice_dir:
                             prev_invoices = await asyncio.to_thread(parse_invoices, prev_invoice_dir)
-                            # Set gdrive_file_id on each invoice
+                            # Set gdrive_file_id and source month on each invoice
                             for inv in prev_invoices:
                                 inv.gdrive_file_id = file_id_map.get(inv.filename)
+                                inv.source_month = prev_month  # Track which folder this came from
+                                if inv.gdrive_file_id:
+                                    invoice_source_month[inv.gdrive_file_id] = prev_month
                             invoices.extend(prev_invoices)
                             yield send_event("progress", {
                                 "step": "downloaded_prev",
@@ -549,16 +666,83 @@ async def monthly_reconcile_stream(
             month.status = "completed"
             month.last_synced_at = datetime.utcnow()
             month.error_message = None
+
+            # Track invoice payments for cross-month reporting
+            from decimal import Decimal
+
+            # Clear records for invoices from THIS month's folder only
+            # (we'll recreate them based on current matches)
+            if request.gdrive_folder_id:
+                db.query(InvoicePayment).filter(
+                    InvoicePayment.invoice_month == year_month
+                ).delete()
+
+            # Record matched invoices with their payment info
+            for m in matched:
+                if m.invoice and m.invoice.gdrive_file_id:
+                    source_month = getattr(m.invoice, 'source_month', year_month)
+
+                    if source_month == year_month:
+                        # Invoice is from current month folder - create new record
+                        payment = InvoicePayment(
+                            invoice_month=source_month,
+                            gdrive_file_id=m.invoice.gdrive_file_id,
+                            filename=m.invoice.filename,
+                            paid_month=year_month,
+                            transaction_id=m.transaction.id,
+                            amount=Decimal(str(m.transaction.amount)) if m.transaction.amount else None,
+                            vendor=m.invoice.vendor,
+                        )
+                        db.add(payment)
+                    else:
+                        # Invoice is from previous month folder - update existing record
+                        existing = db.query(InvoicePayment).filter(
+                            InvoicePayment.gdrive_file_id == m.invoice.gdrive_file_id
+                        ).first()
+                        if existing:
+                            existing.paid_month = year_month
+                            existing.transaction_id = m.transaction.id
+                            existing.amount = Decimal(str(m.transaction.amount)) if m.transaction.amount else None
+                        else:
+                            # No existing record (prev month not synced yet), create one
+                            payment = InvoicePayment(
+                                invoice_month=source_month,
+                                gdrive_file_id=m.invoice.gdrive_file_id,
+                                filename=m.invoice.filename,
+                                paid_month=year_month,
+                                transaction_id=m.transaction.id,
+                                amount=Decimal(str(m.transaction.amount)) if m.transaction.amount else None,
+                                vendor=m.invoice.vendor,
+                            )
+                            db.add(payment)
+
+            # Record unmatched invoices from this month's folder (unpaid)
+            for inv in unmatched_inv:
+                if inv.gdrive_file_id:
+                    source_month = getattr(inv, 'source_month', year_month)
+                    # Only record if it's from the current month folder
+                    if source_month == year_month:
+                        payment = InvoicePayment(
+                            invoice_month=year_month,
+                            gdrive_file_id=inv.gdrive_file_id,
+                            filename=inv.filename,
+                            paid_month=None,  # Not paid yet
+                            transaction_id=None,
+                            amount=Decimal(str(inv.amount)) if inv.amount else None,
+                            vendor=inv.vendor,
+                        )
+                        db.add(payment)
+
             db.commit()
 
             # Clean up downloaded files
             import shutil
-            if request.gdrive_folder_id:
-                download_dir = _gdrive_service._download_dir / request.gdrive_folder_id
+            if current_folder_id:
+                download_dir = _gdrive_service._download_dir / current_folder_id
                 if download_dir.exists():
                     shutil.rmtree(download_dir, ignore_errors=True)
-            if request.prev_month_gdrive_folder_id:
-                prev_download_dir = _gdrive_service._download_dir / request.prev_month_gdrive_folder_id
+            if prev_month_folder_id:
+                prev_download_dir = _gdrive_service._download_dir / prev_month_folder_id
                 if prev_download_dir.exists():
                     shutil.rmtree(prev_download_dir, ignore_errors=True)
 
@@ -570,6 +754,339 @@ async def monthly_reconcile_stream(
                 "known_count": month.known_count,
                 "fee_count": month.fee_count,
                 "income_count": month.income_count
+            })
+
+        except Exception as e:
+            yield send_event("error", {"message": sanitize_error(e)})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+# ===== Batch Sync Endpoint =====
+
+@router.post("/batch-sync-stream")
+async def batch_sync_stream(
+    request: BatchSyncRequest,
+    db: Session = Depends(get_db)
+):
+    """Sync multiple months efficiently with a single Fio API call."""
+    from calendar import monthrange
+    from web.database.models import MonthlyReconciliation, AppSettings
+
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
+            if not request.months:
+                yield send_event("error", {"message": "No months specified"})
+                return
+
+            # Sort months chronologically
+            sorted_months = sorted(request.months)
+            first_month = sorted_months[0]
+            last_month = sorted_months[-1]
+
+            yield send_event("started", {"months": sorted_months})
+            yield send_event("progress", {"step": "started", "message": f"Batch sync for {len(sorted_months)} months..."})
+            await asyncio.sleep(0.1)
+
+            # Calculate date range for entire batch
+            first_year, first_mon = map(int, first_month.split("-"))
+            last_year, last_mon = map(int, last_month.split("-"))
+
+            from_date = datetime(first_year, first_mon, 1).date()
+            last_day = monthrange(last_year, last_mon)[1]
+            end_of_last_month = datetime(last_year, last_mon, last_day).date()
+            today = datetime.now().date()
+            to_date = min(end_of_last_month, today)
+
+            # Step 1: Fetch ALL transactions in one API call
+            yield send_event("progress", {"step": "fetching", "message": f"Fetching transactions {first_month} to {last_month}..."})
+            await asyncio.sleep(0.1)
+
+            try:
+                all_transactions = await asyncio.to_thread(
+                    fetch_transactions_from_api,
+                    request.fio_token.strip(),
+                    from_date,
+                    to_date
+                )
+                yield send_event("progress", {
+                    "step": "fetched",
+                    "message": f"Found {len(all_transactions)} total transactions",
+                    "count": len(all_transactions)
+                })
+            except Exception as e:
+                error_msg = sanitize_error(e)
+                yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
+                return
+
+            await asyncio.sleep(0.1)
+
+            # Group transactions by month
+            transactions_by_month: dict[str, list] = {m: [] for m in sorted_months}
+            for t in all_transactions:
+                t_month = f"{t.date.year}-{t.date.month:02d}"
+                if t_month in transactions_by_month:
+                    transactions_by_month[t_month].append(t)
+
+            # Step 2: Get parent folder and download all needed invoice folders
+            parent_setting = db.query(AppSettings).filter(
+                AppSettings.key == "invoice_parent_folder_id"
+            ).first()
+
+            invoices_by_month: dict[str, list] = {}
+            file_id_maps: dict[str, dict] = {}
+
+            if parent_setting and parent_setting.value and _gdrive_service._credentials:
+                # Determine all folders we need (each month + previous month for first)
+                folders_to_download = set()
+                for ym in sorted_months:
+                    folders_to_download.add(ym)
+                # Add month before first for late payment matching
+                first_y, first_m = map(int, first_month.split("-"))
+                prev_date = datetime(first_y, first_m, 1) - __import__('datetime').timedelta(days=1)
+                prev_month = f"{prev_date.year}-{prev_date.month:02d}"
+                folders_to_download.add(prev_month)
+
+                yield send_event("progress", {"step": "downloading", "message": f"Downloading invoices for {len(folders_to_download)} months..."})
+                await asyncio.sleep(0.1)
+
+                for ym in sorted(folders_to_download):
+                    y, m = map(int, ym.split("-"))
+                    subfolder_name = f"{y}{m:02d}"
+                    subfolder = _gdrive_service.find_subfolder(parent_setting.value, subfolder_name)
+
+                    if subfolder:
+                        try:
+                            invoice_dir, files, file_id_map = await asyncio.to_thread(
+                                _gdrive_service.download_pdfs,
+                                subfolder.id,
+                                db,
+                                True  # force_refresh for sync
+                            )
+                            file_id_maps[ym] = file_id_map
+
+                            if invoice_dir:
+                                invoices = await asyncio.to_thread(parse_invoices, invoice_dir)
+                                for inv in invoices:
+                                    inv.gdrive_file_id = file_id_map.get(inv.filename)
+                                    inv.source_month = ym
+                                invoices_by_month[ym] = invoices
+
+                                yield send_event("progress", {
+                                    "step": "downloaded_month",
+                                    "message": f"Downloaded {len(invoices)} invoices for {ym}",
+                                    "month": ym,
+                                    "count": len(invoices)
+                                })
+                        except Exception as e:
+                            yield send_event("progress", {
+                                "step": "download_warning",
+                                "message": f"Warning for {ym}: {sanitize_error(e)}"
+                            })
+                    else:
+                        yield send_event("progress", {
+                            "step": "folder_not_found",
+                            "message": f"No folder found for {ym} ({subfolder_name})"
+                        })
+
+                await asyncio.sleep(0.1)
+
+            # Step 3: Process each month
+            known_service = KnownTransactionService(db)
+
+            for ym in sorted_months:
+                yield send_event("progress", {"step": "processing_month", "message": f"Processing {ym}...", "month": ym})
+                await asyncio.sleep(0.1)
+
+                y, m = map(int, ym.split("-"))
+                prev_date = datetime(y, m, 1) - __import__('datetime').timedelta(days=1)
+                prev_ym = f"{prev_date.year}-{prev_date.month:02d}"
+
+                # Get or create month record
+                month = db.query(MonthlyReconciliation).filter(
+                    MonthlyReconciliation.year_month == ym
+                ).first()
+
+                # Get folder info
+                subfolder_name = f"{y}{m:02d}"
+                subfolder = None
+                if parent_setting and parent_setting.value and _gdrive_service._credentials:
+                    subfolder = _gdrive_service.find_subfolder(parent_setting.value, subfolder_name)
+
+                if not month:
+                    month = MonthlyReconciliation(
+                        year_month=ym,
+                        gdrive_folder_id=subfolder.id if subfolder else None,
+                        gdrive_folder_name=subfolder.name if subfolder else None,
+                        status="processing"
+                    )
+                    db.add(month)
+                    db.commit()
+                    db.refresh(month)
+                else:
+                    month.status = "processing"
+                    if subfolder:
+                        month.gdrive_folder_id = subfolder.id
+                        month.gdrive_folder_name = subfolder.name
+                    db.commit()
+
+                # Get transactions for this month
+                month_transactions = transactions_by_month.get(ym, [])
+
+                # Combine invoices: current month + previous month
+                month_invoices = list(invoices_by_month.get(ym, []))
+                month_invoices.extend(invoices_by_month.get(prev_ym, []))
+
+                # Separate fees, income, and check known transactions
+                known_transactions = []
+                unknown_transactions = []
+                fee_transactions = []
+                income_transactions = []
+
+                for trans in month_transactions:
+                    if trans.is_fee:
+                        fee_transactions.append(trans)
+                        continue
+                    if trans.amount > 0:
+                        income_transactions.append(trans)
+                        continue
+                    rule = known_service.match_transaction(trans)
+                    if rule:
+                        known_transactions.append((trans, rule))
+                    else:
+                        unknown_transactions.append(trans)
+
+                # Match transactions with invoices
+                matcher = Matcher()
+                matched, unmatched_trans, unmatched_inv = matcher.match_all(unknown_transactions, month_invoices)
+
+                # Save results
+                from decimal import Decimal
+                results = {
+                    "matched": [
+                        {
+                            "transaction": serialize_transaction(m_result.transaction),
+                            "invoice": serialize_invoice(m_result.invoice) if m_result.invoice else None,
+                            "confidence": m_result.confidence,
+                            "confidence_pct": m_result.confidence_pct,
+                            "status": m_result.status,
+                            "strategy_scores": m_result.strategy_scores,
+                        }
+                        for m_result in matched
+                    ],
+                    "unmatched": [serialize_transaction(t) for t in unmatched_trans],
+                    "unmatched_invoices": [serialize_invoice(inv) for inv in unmatched_inv if getattr(inv, 'source_month', ym) == ym],
+                    "known": [
+                        {
+                            **serialize_transaction(t),
+                            "rule_reason": rule.reason,
+                        }
+                        for t, rule in known_transactions
+                    ],
+                    "fees": [serialize_transaction(t) for t in fee_transactions],
+                    "income": [serialize_transaction(t) for t in income_transactions],
+                }
+
+                # Cache transactions for this month
+                month.transactions_json = [
+                    {
+                        "id": t.id,
+                        "date": str(t.date),
+                        "amount": str(t.amount),
+                        "currency": t.currency,
+                        "counter_account": t.counter_account,
+                        "counter_name": t.counter_name,
+                        "vs": t.vs,
+                        "note": t.note,
+                        "transaction_type": t.transaction_type,
+                    }
+                    for t in month_transactions
+                ]
+
+                month.results_json = results
+                month.matched_count = len([m_result for m_result in matched if m_result.status == "OK"])
+                month.review_count = len([m_result for m_result in matched if m_result.status == "REVIEW"])
+                month.unmatched_count = len(unmatched_trans)
+                month.known_count = len(known_transactions)
+                month.fee_count = len(fee_transactions)
+                month.income_count = len(income_transactions)
+                month.status = "completed"
+                month.last_synced_at = datetime.utcnow()
+                month.error_message = None
+
+                # Track invoice payments
+                if subfolder:
+                    db.query(InvoicePayment).filter(
+                        InvoicePayment.invoice_month == ym
+                    ).delete()
+
+                for m_result in matched:
+                    if m_result.invoice and m_result.invoice.gdrive_file_id:
+                        source_month = getattr(m_result.invoice, 'source_month', ym)
+                        if source_month == ym:
+                            payment = InvoicePayment(
+                                invoice_month=source_month,
+                                gdrive_file_id=m_result.invoice.gdrive_file_id,
+                                filename=m_result.invoice.filename,
+                                paid_month=ym,
+                                transaction_id=m_result.transaction.id,
+                                amount=Decimal(str(m_result.transaction.amount)) if m_result.transaction.amount else None,
+                                vendor=m_result.invoice.vendor,
+                            )
+                            db.add(payment)
+                        else:
+                            existing = db.query(InvoicePayment).filter(
+                                InvoicePayment.gdrive_file_id == m_result.invoice.gdrive_file_id
+                            ).first()
+                            if existing:
+                                existing.paid_month = ym
+                                existing.transaction_id = m_result.transaction.id
+                                existing.amount = Decimal(str(m_result.transaction.amount)) if m_result.transaction.amount else None
+
+                for inv in unmatched_inv:
+                    if inv.gdrive_file_id and getattr(inv, 'source_month', ym) == ym:
+                        payment = InvoicePayment(
+                            invoice_month=ym,
+                            gdrive_file_id=inv.gdrive_file_id,
+                            filename=inv.filename,
+                            paid_month=None,
+                            transaction_id=None,
+                            amount=Decimal(str(inv.amount)) if inv.amount else None,
+                            vendor=inv.vendor,
+                        )
+                        db.add(payment)
+
+                db.commit()
+
+                yield send_event("month_complete", {
+                    "month": ym,
+                    "matched_count": month.matched_count,
+                    "unmatched_count": month.unmatched_count,
+                    "known_count": month.known_count
+                })
+
+            # Clean up downloaded files
+            import shutil
+            if parent_setting and parent_setting.value:
+                for ym in invoices_by_month.keys():
+                    y, m = map(int, ym.split("-"))
+                    subfolder_name = f"{y}{m:02d}"
+                    subfolder = _gdrive_service.find_subfolder(parent_setting.value, subfolder_name)
+                    if subfolder:
+                        download_dir = _gdrive_service._download_dir / subfolder.id
+                        if download_dir.exists():
+                            shutil.rmtree(download_dir, ignore_errors=True)
+
+            yield send_event("complete", {
+                "months": sorted_months,
+                "total_months": len(sorted_months)
             })
 
         except Exception as e:

@@ -1,25 +1,15 @@
 import * as React from "react"
 import { Link } from "wouter"
-import { ArrowLeft, Loader2, RefreshCw } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, type Transaction } from "@/api/client"
+import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
-import { MatchedTable, UnmatchedTable, KnownTable, FeesTable, IncomeTable } from "@/components/report/TransactionTable"
+import { MatchedTable, UnmatchedTable, KnownTable, FeesTable, IncomeTable, FolderInvoicesTable } from "@/components/report/TransactionTable"
 import { MarkKnownModal, type MarkKnownData } from "@/components/report/MarkKnownModal"
 import { UploadPdfModal } from "@/components/report/UploadPdfModal"
+import { UploadInvoiceModal } from "@/components/report/UploadInvoiceModal"
 import { useSync } from "@/context/SyncContext"
-
-interface MonthFolderInfo {
-  id: string
-  name: string
-}
-
-// Helper to get folder info for a month from localStorage
-function getMonthFolder(yearMonth: string): MonthFolderInfo | null {
-  const folders = JSON.parse(localStorage.getItem("month_folders") || "{}")
-  return folders[yearMonth] || null
-}
 
 // Calculate previous month
 function getPrevMonth(ym: string): string {
@@ -34,13 +24,26 @@ interface MonthReportPageProps {
 
 export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const { data: month, isLoading, error, refetch } = useMonth(yearMonth)
+  const { data: months } = useMonths()
+  const { data: invoicesData } = useMonthInvoices(yearMonth)
   const markKnown = useMarkKnownMonthly()
   const matchWithPdf = useMatchWithPdfMonthly()
+  const uploadInvoice = useUploadInvoice()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
   const [uploadPdfTransaction, setUploadPdfTransaction] = React.useState<Transaction | null>(null)
+  const [showUploadInvoice, setShowUploadInvoice] = React.useState(false)
   const { startSync } = useSync()
+
+  // Helper to get folder info for a month from API data
+  const getMonthFolder = React.useCallback((ym: string) => {
+    const m = months?.find((x) => x.year_month === ym)
+    if (m?.gdrive_folder_id && m?.gdrive_folder_name) {
+      return { id: m.gdrive_folder_id, name: m.gdrive_folder_name }
+    }
+    return null
+  }, [months])
 
   // Format year-month for display
   const formatYearMonth = (ym: string) => {
@@ -83,6 +86,16 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
       prevMonthGdriveFolderId: prevMonthFolder?.id,
       onComplete: () => refetch(),
     })
+  }
+
+  const handleUploadInvoice = async (file: File, invoiceDate: string) => {
+    await uploadInvoice.mutateAsync({
+      yearMonth,
+      file,
+      invoiceDate,
+    })
+    setShowUploadInvoice(false)
+    refetch()
   }
 
   if (isLoading) {
@@ -145,21 +158,30 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleResync}
-        >
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Re-sync
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowUploadInvoice(true)}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Add Invoice
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleResync}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Re-sync
+          </Button>
+        </div>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary cards - use actual array lengths for consistency with tabs */}
       <SummaryCards
-        matched={month.matched_count}
-        review={month.review_count}
-        unmatched={month.unmatched_count}
-        known={month.known_count}
+        matched={month.matched?.filter(m => m.status === 'OK').length || 0}
+        review={month.matched?.filter(m => m.status === 'REVIEW').length || 0}
+        unmatched={month.unmatched?.length || 0}
+        known={month.known?.length || 0}
       />
 
       {/* Tabs */}
@@ -169,7 +191,9 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
             Unmatched ({month.unmatched?.length || 0})
           </TabsTrigger>
           <TabsTrigger value="matched">
-            Matched ({month.matched?.length || 0})
+            Matched ({month.matched?.filter(m => m.status === 'OK').length || 0}
+            {(month.matched?.filter(m => m.status === 'REVIEW').length || 0) > 0 &&
+              ` + ${month.matched?.filter(m => m.status === 'REVIEW').length} review`})
           </TabsTrigger>
           <TabsTrigger value="known">
             Known ({month.known?.length || 0})
@@ -179,6 +203,9 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
           </TabsTrigger>
           <TabsTrigger value="income">
             Income ({month.income?.length || 0})
+          </TabsTrigger>
+          <TabsTrigger value="folder-invoices">
+            Folder Invoices ({invoicesData?.total || 0})
           </TabsTrigger>
         </TabsList>
 
@@ -205,6 +232,13 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         <TabsContent value="income" className="border rounded-lg">
           <IncomeTable transactions={month.income || []} />
         </TabsContent>
+
+        <TabsContent value="folder-invoices" className="border rounded-lg">
+          <FolderInvoicesTable
+            invoices={invoicesData?.invoices || []}
+            formatYearMonth={formatYearMonth}
+          />
+        </TabsContent>
       </Tabs>
 
       {/* Mark Known Modal */}
@@ -223,6 +257,15 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         onOpenChange={(open) => !open && setUploadPdfTransaction(null)}
         onSubmit={handleUploadPdf}
         isLoading={matchWithPdf.isPending}
+      />
+
+      {/* Upload Invoice Modal */}
+      <UploadInvoiceModal
+        open={showUploadInvoice}
+        onOpenChange={setShowUploadInvoice}
+        onSubmit={handleUploadInvoice}
+        isLoading={uploadInvoice.isPending}
+        yearMonth={yearMonth}
       />
     </div>
   )

@@ -1,4 +1,4 @@
-import { Upload, ExternalLink } from "lucide-react"
+import { Upload, ExternalLink, Check, Clock } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatCurrency, formatDate } from "@/lib/utils"
-import type { Transaction, MatchResult } from "@/api/client"
+import type { Transaction, MatchResult, FolderInvoice } from "@/api/client"
 
 interface MatchedTableProps {
   matches: MatchResult[]
@@ -279,6 +279,78 @@ export function IncomeTable({ transactions }: IncomeTableProps) {
               </TableCell>
               <TableCell className="max-w-[200px] truncate">{t.note || "-"}</TableCell>
               <TableCell className="font-mono">{t.vs || "-"}</TableCell>
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  )
+}
+
+interface FolderInvoicesTableProps {
+  invoices: FolderInvoice[]
+  formatYearMonth: (ym: string) => string
+}
+
+export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoicesTableProps) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Filename</TableHead>
+          <TableHead>Vendor</TableHead>
+          <TableHead>Amount</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Paid In</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {invoices.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={5} className="text-center text-muted-foreground">
+              No invoices in folder. Re-sync to populate.
+            </TableCell>
+          </TableRow>
+        ) : (
+          invoices.map((inv) => (
+            <TableRow key={inv.gdrive_file_id}>
+              <TableCell>
+                <a
+                  href={`https://drive.google.com/file/d/${inv.gdrive_file_id}/view`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-blue-600 hover:underline"
+                >
+                  {inv.filename}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </TableCell>
+              <TableCell className="max-w-[150px] truncate">{inv.vendor || "-"}</TableCell>
+              <TableCell className="font-mono">
+                {inv.amount ? `€${inv.amount}` : "-"}
+              </TableCell>
+              <TableCell>
+                {inv.status === "paid" ? (
+                  <Badge variant="success" className="flex items-center gap-1 w-fit">
+                    <Check className="h-3 w-3" />
+                    Paid
+                  </Badge>
+                ) : (
+                  <Badge variant="warning" className="flex items-center gap-1 w-fit">
+                    <Clock className="h-3 w-3" />
+                    Unpaid
+                  </Badge>
+                )}
+              </TableCell>
+              <TableCell>
+                {inv.paid_month ? (
+                  <span className="text-muted-foreground">
+                    {formatYearMonth(inv.paid_month)}
+                  </span>
+                ) : (
+                  "-"
+                )}
+              </TableCell>
             </TableRow>
           ))
         )}
