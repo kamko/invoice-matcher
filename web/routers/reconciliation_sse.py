@@ -423,6 +423,7 @@ async def monthly_reconcile_stream(
                         vs=t_data.get("vs"),
                         note=t_data.get("note"),
                         transaction_type=t_data.get("transaction_type", "wire"),
+                        raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
                     )
                     transactions.append(t)
 
@@ -462,6 +463,7 @@ async def monthly_reconcile_stream(
                                 "vs": t.vs,
                                 "note": t.note,
                                 "transaction_type": t.transaction_type,
+                                "raw_type": t.raw_type,
                             }
                             for t in transactions
                         ]
@@ -892,6 +894,7 @@ async def batch_sync_stream(
                             vs=t_data.get("vs"),
                             note=t_data.get("note"),
                             transaction_type=t_data.get("transaction_type", "wire"),
+                            raw_type=t_data.get("raw_type", t_data.get("transaction_type", "wire")),
                         )
                         cached_trans.append(t)
                     transactions_by_month[ym] = cached_trans
@@ -1160,6 +1163,7 @@ async def batch_sync_stream(
                         "vs": t.vs,
                         "note": t.note,
                         "transaction_type": t.transaction_type,
+                        "raw_type": t.raw_type,
                     }
                     for t in month_transactions
                 ]
