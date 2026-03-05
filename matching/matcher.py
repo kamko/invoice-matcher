@@ -118,7 +118,26 @@ class Matcher:
         return matched_results, unmatched_transactions, unmatched_invoices
 
     def _is_compatible(self, transaction: Transaction, invoice: Invoice) -> bool:
-        """Check if transaction and invoice types are compatible."""
+        """Check if transaction and invoice types are compatible.
+
+        Credit notes (refunds) must match with positive transactions (income).
+        Regular invoices must match with negative transactions (expenses).
+        """
+        # Credit notes match with positive (income) transactions only
+        if invoice.is_credit_note:
+            if transaction.amount <= 0:
+                return False  # Credit notes need positive transactions
+            # Type compatibility for credit notes
+            if transaction.is_card and invoice.is_card:
+                return True
+            if transaction.is_wire and invoice.is_wire:
+                return True
+            return False
+
+        # Regular invoices match with negative (expense) transactions only
+        if transaction.amount > 0:
+            return False  # Regular invoices need negative transactions
+
         if transaction.is_card and invoice.is_card:
             return True
         if transaction.is_wire and invoice.is_wire:

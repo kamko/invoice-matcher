@@ -177,6 +177,7 @@ class ReconcileService:
             "vendor": inv.vendor,
             "amount": str(inv.amount) if inv.amount else None,
             "vs": inv.vs,
+            "is_credit_note": inv.is_credit_note,
         }
 
     def get_session_results(self, session: ReconciliationSession) -> Dict[str, Any]:
@@ -295,27 +296,41 @@ class ReconcileService:
                 else:
                     unknown_transactions.append(trans)
 
-            # Run matcher on unknown transactions only
+            # Separate credit-note invoices from regular invoices
+            credit_note_invoices = [inv for inv in invoices if inv.is_credit_note]
+            regular_invoices = [inv for inv in invoices if not inv.is_credit_note]
+
+            # Run matcher on unknown transactions vs regular invoices
             matcher = Matcher()
-            matched, unmatched_trans, unmatched_inv = matcher.match_all(
+            matched, unmatched_trans, unmatched_regular_inv = matcher.match_all(
                 unknown_transactions,
-                invoices
+                regular_invoices
             )
+
+            # Match credit-note invoices with income transactions
+            credit_matched, unmatched_income, unmatched_credit_inv = matcher.match_all(
+                income_transactions,
+                credit_note_invoices
+            )
+
+            # Combine results
+            all_matched = matched + credit_matched
+            all_unmatched_inv = unmatched_regular_inv + unmatched_credit_inv
 
             # Store results
             results = self._serialize_results(
-                matched, unmatched_trans, unmatched_inv, known_transactions
+                all_matched, unmatched_trans, all_unmatched_inv, known_transactions
             )
             results["fees"] = [self._serialize_transaction(t) for t in fee_transactions]
-            results["income"] = [self._serialize_transaction(t) for t in income_transactions]
+            results["income"] = [self._serialize_transaction(t) for t in unmatched_income]  # Only unmatched income
 
             month.results_json = results
-            month.matched_count = len([m for m in matched if m.status == "OK"])
-            month.review_count = len([m for m in matched if m.status == "REVIEW"])
+            month.matched_count = len([m for m in all_matched if m.status == "OK"])
+            month.review_count = len([m for m in all_matched if m.status == "REVIEW"])
             month.unmatched_count = len(unmatched_trans)
             month.known_count = len(known_transactions)
             month.fee_count = len(fee_transactions)
-            month.income_count = len(income_transactions)
+            month.income_count = len(unmatched_income)  # Only unmatched income
             month.status = "completed"
             month.last_synced_at = datetime.utcnow()
             month.error_message = None

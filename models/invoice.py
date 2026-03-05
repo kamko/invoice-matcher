@@ -33,5 +33,15 @@ class Invoice:
         """Check if this is a wire transfer invoice."""
         return self.payment_type == "wire"
 
+    @property
+    def is_credit_note(self) -> bool:
+        """Check if this is a credit note (reversal of invoice).
+
+        Credit notes represent refunds/credits coming back to the company.
+        They should match with positive (income) transactions, not expenses.
+        """
+        filename_lower = self.filename.lower()
+        return "credit-note" in filename_lower or "credit_note" in filename_lower
+
     def __str__(self) -> str:
         return f"Invoice({self.filename}, {self.amount}, {self.vendor})"

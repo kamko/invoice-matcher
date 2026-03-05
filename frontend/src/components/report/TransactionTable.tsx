@@ -1,4 +1,4 @@
-import { Upload, ExternalLink, Check, Clock } from "lucide-react"
+import { Upload, ExternalLink, Check, Clock, Undo2 } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -297,6 +297,51 @@ interface FolderInvoicesTableProps {
 }
 
 export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoicesTableProps) {
+  // Helper to detect credit notes from filename
+  const isCreditNote = (filename: string) => {
+    const lower = filename.toLowerCase()
+    return lower.includes("credit-note") || lower.includes("credit_note")
+  }
+
+  // Helper to render status badge
+  const renderStatus = (inv: FolderInvoice) => {
+    const creditNote = isCreditNote(inv.filename)
+
+    if (inv.status === "paid") {
+      // Matched with a transaction
+      if (creditNote) {
+        return (
+          <Badge variant="success" className="flex items-center gap-1 w-fit">
+            <Undo2 className="h-3 w-3" />
+            Credited
+          </Badge>
+        )
+      }
+      return (
+        <Badge variant="success" className="flex items-center gap-1 w-fit">
+          <Check className="h-3 w-3" />
+          Paid
+        </Badge>
+      )
+    }
+
+    // Not matched yet
+    if (creditNote) {
+      return (
+        <Badge variant="outline" className="flex items-center gap-1 w-fit">
+          <Undo2 className="h-3 w-3" />
+          Pending Refund
+        </Badge>
+      )
+    }
+    return (
+      <Badge variant="warning" className="flex items-center gap-1 w-fit">
+        <Clock className="h-3 w-3" />
+        Unpaid
+      </Badge>
+    )
+  }
+
   return (
     <Table>
       <TableHeader>
@@ -305,7 +350,7 @@ export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoice
           <TableHead>Vendor</TableHead>
           <TableHead>Amount</TableHead>
           <TableHead>Status</TableHead>
-          <TableHead>Paid In</TableHead>
+          <TableHead>Settled In</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -334,17 +379,7 @@ export function FolderInvoicesTable({ invoices, formatYearMonth }: FolderInvoice
                 {inv.amount ? `€${inv.amount}` : "-"}
               </TableCell>
               <TableCell>
-                {inv.status === "paid" ? (
-                  <Badge variant="success" className="flex items-center gap-1 w-fit">
-                    <Check className="h-3 w-3" />
-                    Paid
-                  </Badge>
-                ) : (
-                  <Badge variant="warning" className="flex items-center gap-1 w-fit">
-                    <Clock className="h-3 w-3" />
-                    Unpaid
-                  </Badge>
-                )}
+                {renderStatus(inv)}
               </TableCell>
               <TableCell>
                 {inv.paid_month ? (
