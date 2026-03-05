@@ -822,6 +822,14 @@ async def monthly_reconcile_stream(
             })
 
         except Exception as e:
+            # Reset month status on failure
+            try:
+                if 'month' in locals() and month:
+                    month.status = "failed"
+                    month.error_message = sanitize_error(e)
+                    db.commit()
+            except Exception:
+                pass
             yield send_event("error", {"message": sanitize_error(e)})
 
     return StreamingResponse(
@@ -1264,6 +1272,20 @@ async def batch_sync_stream(
             })
 
         except Exception as e:
+            # Reset any processing months to failed
+            try:
+                if 'sorted_months' in locals():
+                    for ym in sorted_months:
+                        m = db.query(MonthlyReconciliation).filter(
+                            MonthlyReconciliation.year_month == ym,
+                            MonthlyReconciliation.status == "processing"
+                        ).first()
+                        if m:
+                            m.status = "failed"
+                            m.error_message = sanitize_error(e)
+                    db.commit()
+            except Exception:
+                pass
             yield send_event("error", {"message": sanitize_error(e)})
 
     return StreamingResponse(
