@@ -101,6 +101,7 @@ export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: Unmat
           <TableHead>Date</TableHead>
           <TableHead>Amount</TableHead>
           <TableHead>Counter Party</TableHead>
+          <TableHead>Account</TableHead>
           <TableHead>Note</TableHead>
           <TableHead>VS</TableHead>
           {hasActions && <TableHead>Actions</TableHead>}
@@ -110,7 +111,7 @@ export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: Unmat
         {transactions.length === 0 ? (
           <TableRow>
             <TableCell
-              colSpan={hasActions ? 6 : 5}
+              colSpan={hasActions ? 7 : 6}
               className="text-center text-muted-foreground"
             >
               No unmatched transactions
@@ -123,10 +124,13 @@ export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: Unmat
               <TableCell className="font-mono">
                 {formatCurrency(t.amount, t.currency)}
               </TableCell>
-              <TableCell className="max-w-[150px] truncate">
-                {t.counter_name || t.counter_account}
+              <TableCell className="max-w-[150px] truncate" title={t.counter_name}>
+                {t.counter_name || "-"}
               </TableCell>
-              <TableCell className="max-w-[200px] truncate">{t.note}</TableCell>
+              <TableCell className="font-mono text-xs max-w-[180px] truncate" title={t.counter_account}>
+                {t.counter_account || "-"}
+              </TableCell>
+              <TableCell className="max-w-[180px] truncate" title={t.note}>{t.note}</TableCell>
               <TableCell className="font-mono">{t.vs || "-"}</TableCell>
               {hasActions && (
                 <TableCell>

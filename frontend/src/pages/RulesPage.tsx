@@ -40,8 +40,9 @@ export function RulesPage() {
 
   // Form state
   const [formData, setFormData] = React.useState({
-    rule_type: "exact" as "exact" | "pattern" | "vendor",
+    rule_type: "exact" as "exact" | "pattern" | "vendor" | "note" | "account",
     vendor_pattern: "",
+    note_pattern: "",
     amount: "",
     amount_min: "",
     amount_max: "",
@@ -55,6 +56,7 @@ export function RulesPage() {
     setFormData({
       rule_type: "exact",
       vendor_pattern: "",
+      note_pattern: "",
       amount: "",
       amount_min: "",
       amount_max: "",
@@ -74,6 +76,7 @@ export function RulesPage() {
     setFormData({
       rule_type: rule.rule_type,
       vendor_pattern: rule.vendor_pattern || "",
+      note_pattern: rule.note_pattern || "",
       amount: rule.amount || "",
       amount_min: rule.amount_min || "",
       amount_max: rule.amount_max || "",

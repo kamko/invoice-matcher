@@ -82,6 +82,8 @@ class KnownTransactionService:
             return self._matches_vendor(transaction, rule)
         elif rule.rule_type == "note":
             return self._matches_note(transaction, rule)
+        elif rule.rule_type == "account":
+            return self._matches_account(transaction, rule)
         return False
 
     def _matches_exact(self, transaction: Transaction, rule: KnownTransaction) -> bool:
@@ -154,6 +156,14 @@ class KnownTransactionService:
             return True
         except re.error:
             return False
+
+    def _matches_account(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+        """Check account/IBAN-based match."""
+        if not rule.counter_account:
+            return False
+
+        # Exact match on counter_account (IBAN)
+        return transaction.counter_account == rule.counter_account
 
     def record_match(
         self,

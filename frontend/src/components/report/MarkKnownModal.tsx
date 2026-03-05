@@ -16,7 +16,7 @@ import type { Transaction } from "@/api/client"
 
 export interface MarkKnownData {
   transaction_id: string
-  rule_type: "exact" | "pattern" | "vendor" | "note"
+  rule_type: "exact" | "pattern" | "vendor" | "note" | "account"
   reason: string
   vendor_pattern?: string
   note_pattern?: string
@@ -39,15 +39,17 @@ export function MarkKnownModal({
   onSubmit,
   isLoading,
 }: MarkKnownModalProps) {
-  const [ruleType, setRuleType] = React.useState<"exact" | "pattern" | "vendor" | "note">("note")
+  const [ruleType, setRuleType] = React.useState<"exact" | "pattern" | "vendor" | "note" | "account">("note")
   const [reason, setReason] = React.useState("")
   const [vendorPattern, setVendorPattern] = React.useState("")
   const [notePattern, setNotePattern] = React.useState("")
+  const [accountPattern, setAccountPattern] = React.useState("")
 
   React.useEffect(() => {
     if (transaction) {
       // Pre-fill patterns from transaction
       setVendorPattern(transaction.counter_name || "")
+      setAccountPattern(transaction.counter_account || "")
       // Extract keywords from note for pattern suggestion
       const note = transaction.note || ""
       // Take first significant word as pattern suggestion
@@ -69,7 +71,7 @@ export function MarkKnownModal({
       vendor_pattern: (ruleType === "pattern" || ruleType === "vendor") ? vendorPattern : undefined,
       note_pattern: ruleType === "note" ? notePattern : undefined,
       amount: ruleType === "exact" ? transaction.amount : undefined,
-      counter_account: ruleType === "exact" ? transaction.counter_account : undefined,
+      counter_account: (ruleType === "exact" || ruleType === "account") ? accountPattern : undefined,
     })
   }
 
@@ -101,9 +103,23 @@ export function MarkKnownModal({
             <div className="flex justify-between">
               <span className="text-muted-foreground">Counter Party:</span>
               <span className="truncate max-w-[200px]">
-                {transaction.counter_name || transaction.counter_account}
+                {transaction.counter_name || "-"}
               </span>
             </div>
+            {transaction.counter_account && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Account/IBAN:</span>
+                <span className="font-mono text-xs truncate max-w-[200px]">
+                  {transaction.counter_account}
+                </span>
+              </div>
+            )}
+            {transaction.note && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Note:</span>
+                <span className="truncate max-w-[200px]">{transaction.note}</span>
+              </div>
+            )}
           </div>
 
           {/* Rule type */}
@@ -115,6 +131,7 @@ export function MarkKnownModal({
               onChange={(e) => setRuleType(e.target.value as typeof ruleType)}
               options={[
                 { value: "note", label: "Note - Match by note pattern (recommended)" },
+                { value: "account", label: "Account - Match by IBAN/account number" },
                 { value: "exact", label: "Exact - Match exact amount + account" },
                 { value: "pattern", label: "Pattern - Match by text pattern" },
                 { value: "vendor", label: "Vendor - Match by vendor name" },
@@ -155,6 +172,23 @@ export function MarkKnownModal({
               />
               <p className="text-xs text-muted-foreground">
                 Regex pattern to match against vendor name or transaction note
+              </p>
+            </div>
+          )}
+
+          {/* Account pattern (for account type) */}
+          {ruleType === "account" && (
+            <div className="space-y-2">
+              <Label htmlFor="account-pattern">Account/IBAN</Label>
+              <Input
+                id="account-pattern"
+                value={accountPattern}
+                onChange={(e) => setAccountPattern(e.target.value)}
+                placeholder="e.g., SK1234567890 or CZ65..."
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Match transactions going to this account number or IBAN
               </p>
             </div>
           )}

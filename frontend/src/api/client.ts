@@ -26,8 +26,9 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 // Types
 export interface KnownTransaction {
   id: number
-  rule_type: 'exact' | 'pattern' | 'vendor'
+  rule_type: 'exact' | 'pattern' | 'vendor' | 'note' | 'account'
   vendor_pattern?: string
+  note_pattern?: string
   amount?: string
   amount_min?: string
   amount_max?: string
@@ -144,7 +145,7 @@ export interface MonthListItem {
 
 export interface MarkKnownRequest {
   transaction_id: string
-  rule_type: 'exact' | 'pattern' | 'vendor' | 'note'
+  rule_type: 'exact' | 'pattern' | 'vendor' | 'note' | 'account'
   reason: string
   vendor_pattern?: string
   note_pattern?: string

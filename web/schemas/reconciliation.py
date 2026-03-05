@@ -128,6 +128,15 @@ class MonthListItem(BaseModel):
     matched_count: int
     unmatched_count: int
     last_synced_at: Optional[datetime] = None
+    gdrive_folder_id: Optional[str] = None
+    gdrive_folder_name: Optional[str] = None
+
+
+class SetFolderRequest(BaseModel):
+    """Request to set Google Drive folder for a month."""
+
+    folder_id: str
+    folder_name: str
 
 
 class MarkKnownRequest(BaseModel):
