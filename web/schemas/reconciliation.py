@@ -34,7 +34,7 @@ class TransactionResponse(BaseModel):
 class MatchResultResponse(BaseModel):
     """Response schema for a match result."""
 
-    transaction: TransactionResponse
+    transaction: Optional[TransactionResponse] = None  # None for cash invoices
     invoice: Optional[Dict[str, Any]] = None
     confidence: float
     confidence_pct: int
