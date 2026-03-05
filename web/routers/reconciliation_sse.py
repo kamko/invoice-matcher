@@ -811,45 +811,109 @@ async def batch_sync_stream(
             yield send_event("progress", {"step": "started", "message": f"Batch sync for {len(sorted_months)} months..."})
             await asyncio.sleep(0.1)
 
-            # Calculate date range for entire batch
-            first_year, first_mon = map(int, first_month.split("-"))
-            last_year, last_mon = map(int, last_month.split("-"))
-
-            from_date = datetime(first_year, first_mon, 1).date()
-            last_day = monthrange(last_year, last_mon)[1]
-            end_of_last_month = datetime(last_year, last_mon, last_day).date()
-            today = datetime.now().date()
-            to_date = min(end_of_last_month, today)
-
-            # Step 1: Fetch ALL transactions in one API call
-            yield send_event("progress", {"step": "fetching", "message": f"Fetching transactions {first_month} to {last_month}..."})
+            # Step 1: Load cached transactions and determine what needs fetching
+            yield send_event("progress", {"step": "checking_cache", "message": "Checking cached transactions..."})
             await asyncio.sleep(0.1)
 
-            try:
-                all_transactions = await asyncio.to_thread(
-                    fetch_transactions_from_api,
-                    request.fio_token.strip(),
-                    from_date,
-                    to_date
-                )
+            today = datetime.now().date()
+            transactions_by_month: dict[str, list] = {}
+            months_to_fetch: list[str] = []
+
+            # Check each month for cached transactions
+            for ym in sorted_months:
+                y, m = map(int, ym.split("-"))
+                month_end = datetime(y, m, monthrange(y, m)[1]).date()
+                is_past_month = month_end < today
+
+                # Try to load from cache
+                month_record = db.query(MonthlyReconciliation).filter(
+                    MonthlyReconciliation.year_month == ym
+                ).first()
+
+                if month_record and month_record.transactions_json and is_past_month:
+                    # Use cached transactions for past months
+                    from decimal import Decimal
+                    cached_trans = []
+                    for t_data in month_record.transactions_json:
+                        t = Transaction(
+                            id=t_data["id"],
+                            date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
+                            amount=Decimal(t_data["amount"]),
+                            currency=t_data["currency"],
+                            counter_account=t_data.get("counter_account"),
+                            counter_name=t_data.get("counter_name"),
+                            vs=t_data.get("vs"),
+                            note=t_data.get("note"),
+                            transaction_type=t_data.get("transaction_type", "wire"),
+                        )
+                        cached_trans.append(t)
+                    transactions_by_month[ym] = cached_trans
+                else:
+                    # Need to fetch this month
+                    months_to_fetch.append(ym)
+
+            cached_count = len(sorted_months) - len(months_to_fetch)
+            if cached_count > 0:
+                yield send_event("progress", {
+                    "step": "cache_loaded",
+                    "message": f"Loaded {cached_count} months from cache",
+                    "cached_months": cached_count
+                })
+
+            # Fetch only the months we need from Fio API
+            if months_to_fetch:
+                # Calculate minimal date range for uncached months
+                fetch_first = months_to_fetch[0]
+                fetch_last = months_to_fetch[-1]
+                first_year, first_mon = map(int, fetch_first.split("-"))
+                last_year, last_mon = map(int, fetch_last.split("-"))
+
+                from_date = datetime(first_year, first_mon, 1).date()
+                last_day = monthrange(last_year, last_mon)[1]
+                end_of_last_month = datetime(last_year, last_mon, last_day).date()
+                to_date = min(end_of_last_month, today)
+
+                yield send_event("progress", {"step": "fetching", "message": f"Fetching transactions {fetch_first} to {fetch_last}..."})
+                await asyncio.sleep(0.1)
+
+                try:
+                    fetched_transactions = await asyncio.to_thread(
+                        fetch_transactions_from_api,
+                        request.fio_token.strip(),
+                        from_date,
+                        to_date
+                    )
+                    yield send_event("progress", {
+                        "step": "fetched",
+                        "message": f"Found {len(fetched_transactions)} transactions from API",
+                        "count": len(fetched_transactions)
+                    })
+
+                    # Group fetched transactions by month
+                    for t in fetched_transactions:
+                        t_month = f"{t.date.year}-{t.date.month:02d}"
+                        if t_month in months_to_fetch:
+                            if t_month not in transactions_by_month:
+                                transactions_by_month[t_month] = []
+                            transactions_by_month[t_month].append(t)
+
+                except Exception as e:
+                    error_msg = sanitize_error(e)
+                    yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
+                    return
+            else:
                 yield send_event("progress", {
                     "step": "fetched",
-                    "message": f"Found {len(all_transactions)} total transactions",
-                    "count": len(all_transactions)
+                    "message": "All transactions loaded from cache (no API call needed)",
+                    "count": sum(len(t) for t in transactions_by_month.values())
                 })
-            except Exception as e:
-                error_msg = sanitize_error(e)
-                yield send_event("error", {"message": f"Failed to fetch transactions: {error_msg}"})
-                return
+
+            # Ensure all months have an entry
+            for ym in sorted_months:
+                if ym not in transactions_by_month:
+                    transactions_by_month[ym] = []
 
             await asyncio.sleep(0.1)
-
-            # Group transactions by month
-            transactions_by_month: dict[str, list] = {m: [] for m in sorted_months}
-            for t in all_transactions:
-                t_month = f"{t.date.year}-{t.date.month:02d}"
-                if t_month in transactions_by_month:
-                    transactions_by_month[t_month].append(t)
 
             # Step 2: Get parent folder and download all needed invoice folders
             parent_setting = db.query(AppSettings).filter(
