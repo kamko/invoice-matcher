@@ -51,6 +51,7 @@ export interface Transaction {
   note: string
   transaction_type: string
   rule_reason?: string
+  skip_reason?: string
 }
 
 export interface Invoice {
@@ -367,6 +368,67 @@ export function useMarkKnownMonthly() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
       queryClient.invalidateQueries({ queryKey: ['known-transactions'] })
+    },
+  })
+}
+
+export function useSkipTransaction() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ yearMonth, transactionId, reason }: {
+      yearMonth: string
+      transactionId: string
+      reason?: string
+    }) => {
+      const formData = new FormData()
+      formData.append('transaction_id', transactionId)
+      formData.append('reason', reason || '')
+
+      const response = await fetch(`/api/months/${yearMonth}/skip-transaction`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+    },
+  })
+}
+
+export function useManualMatch() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ yearMonth, transactionId, invoiceFileId }: {
+      yearMonth: string
+      transactionId: string
+      invoiceFileId: string
+    }) => {
+      const formData = new FormData()
+      formData.append('transaction_id', transactionId)
+      formData.append('invoice_file_id', invoiceFileId)
+
+      const response = await fetch(`/api/months/${yearMonth}/manual-match`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+      queryClient.invalidateQueries({ queryKey: ['month-invoices', variables.yearMonth] })
     },
   })
 }

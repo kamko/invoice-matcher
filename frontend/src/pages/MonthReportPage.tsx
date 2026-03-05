@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link } from "wouter"
 import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, type Transaction } from "@/api/client"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useSkipTransaction, useManualMatch, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
@@ -9,6 +9,8 @@ import { MatchedTable, UnmatchedTable, KnownTable, FeesTable, IncomeTable, Folde
 import { MarkKnownModal, type MarkKnownData } from "@/components/report/MarkKnownModal"
 import { UploadPdfModal } from "@/components/report/UploadPdfModal"
 import { UploadInvoiceModal } from "@/components/report/UploadInvoiceModal"
+import { SkipTransactionModal } from "@/components/report/SkipTransactionModal"
+import { ManualMatchModal } from "@/components/report/ManualMatchModal"
 import { useSync } from "@/context/SyncContext"
 
 // Calculate previous month
@@ -30,11 +32,15 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const matchWithPdf = useMatchWithPdfMonthly()
   const uploadInvoice = useUploadInvoice()
   const renameInvoice = useRenameInvoice()
+  const skipTransaction = useSkipTransaction()
+  const manualMatch = useManualMatch()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
   const [uploadPdfTransaction, setUploadPdfTransaction] = React.useState<Transaction | null>(null)
   const [showUploadInvoice, setShowUploadInvoice] = React.useState(false)
+  const [skipTransactionData, setSkipTransactionData] = React.useState<Transaction | null>(null)
+  const [manualMatchTransaction, setManualMatchTransaction] = React.useState<Transaction | null>(null)
   const { startSync } = useSync()
 
   // Helper to get folder info for a month from API data
@@ -96,6 +102,28 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
       invoiceDate,
     })
     setShowUploadInvoice(false)
+    refetch()
+  }
+
+  const handleSkipTransaction = async (reason: string) => {
+    if (!skipTransactionData) return
+    await skipTransaction.mutateAsync({
+      yearMonth,
+      transactionId: skipTransactionData.id,
+      reason,
+    })
+    setSkipTransactionData(null)
+    refetch()
+  }
+
+  const handleManualMatch = async (invoiceFileId: string) => {
+    if (!manualMatchTransaction) return
+    await manualMatch.mutateAsync({
+      yearMonth,
+      transactionId: manualMatchTransaction.id,
+      invoiceFileId,
+    })
+    setManualMatchTransaction(null)
     refetch()
   }
 
@@ -183,6 +211,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         review={month.matched?.filter(m => m.status === 'REVIEW').length || 0}
         unmatched={month.unmatched?.length || 0}
         known={month.known?.length || 0}
+        skipped={month.skipped?.length || 0}
       />
 
       {/* Tabs */}
@@ -197,7 +226,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
               ` + ${month.matched?.filter(m => m.status === 'REVIEW').length} review`})
           </TabsTrigger>
           <TabsTrigger value="known">
-            Known ({month.known?.length || 0})
+            Known ({(month.known?.length || 0) + (month.skipped?.length || 0)})
           </TabsTrigger>
           <TabsTrigger value="fees">
             Fees ({month.fees?.length || 0})
@@ -215,6 +244,8 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
             transactions={month.unmatched || []}
             onMarkKnown={setMarkKnownTransaction}
             onUploadPdf={setUploadPdfTransaction}
+            onSkip={setSkipTransactionData}
+            onManualMatch={setManualMatchTransaction}
           />
         </TabsContent>
 
@@ -223,7 +254,10 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         </TabsContent>
 
         <TabsContent value="known" className="border rounded-lg">
-          <KnownTable transactions={month.known || []} />
+          <KnownTable
+            transactions={month.known || []}
+            skippedTransactions={month.skipped || []}
+          />
         </TabsContent>
 
         <TabsContent value="fees" className="border rounded-lg">
@@ -273,6 +307,25 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         onSubmit={handleUploadInvoice}
         isLoading={uploadInvoice.isPending}
         yearMonth={yearMonth}
+      />
+
+      {/* Skip Transaction Modal */}
+      <SkipTransactionModal
+        transaction={skipTransactionData}
+        open={skipTransactionData !== null}
+        onOpenChange={(open) => !open && setSkipTransactionData(null)}
+        onSubmit={handleSkipTransaction}
+        isLoading={skipTransaction.isPending}
+      />
+
+      {/* Manual Match Modal */}
+      <ManualMatchModal
+        transaction={manualMatchTransaction}
+        invoices={invoicesData?.invoices || []}
+        open={manualMatchTransaction !== null}
+        onOpenChange={(open) => !open && setManualMatchTransaction(null)}
+        onSubmit={handleManualMatch}
+        isLoading={manualMatch.isPending}
       />
     </div>
   )

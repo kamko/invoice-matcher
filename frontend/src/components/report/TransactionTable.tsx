@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Upload, ExternalLink, Check, Clock, Undo2, Pencil } from "lucide-react"
+import { Upload, ExternalLink, Check, Clock, Undo2, Pencil, Link } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -91,10 +91,12 @@ interface UnmatchedTableProps {
   transactions: Transaction[]
   onMarkKnown?: (transaction: Transaction) => void
   onUploadPdf?: (transaction: Transaction) => void
+  onSkip?: (transaction: Transaction) => void
+  onManualMatch?: (transaction: Transaction) => void
 }
 
-export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: UnmatchedTableProps) {
-  const hasActions = onMarkKnown || onUploadPdf
+export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf, onSkip, onManualMatch }: UnmatchedTableProps) {
+  const hasActions = onMarkKnown || onUploadPdf || onSkip || onManualMatch
 
   return (
     <Table>
@@ -148,9 +150,35 @@ export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: Unmat
                         Upload
                       </Button>
                     )}
-                    {onMarkKnown && (
-                      <Button size="sm" variant="outline" onClick={() => onMarkKnown(t)}>
+                    {onManualMatch && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onManualMatch(t)}
+                        title="Match with existing invoice from folder"
+                      >
+                        <Link className="h-4 w-4 mr-1" />
+                        Match
+                      </Button>
+                    )}
+                    {onSkip && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onSkip(t)}
+                        title="Skip this transaction (one-time, no rule)"
+                      >
                         Skip
+                      </Button>
+                    )}
+                    {onMarkKnown && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onMarkKnown(t)}
+                        title="Create a rule to match similar transactions"
+                      >
+                        Rule
                       </Button>
                     )}
                   </div>
@@ -166,9 +194,15 @@ export function UnmatchedTable({ transactions, onMarkKnown, onUploadPdf }: Unmat
 
 interface KnownTableProps {
   transactions: Transaction[]
+  skippedTransactions?: Transaction[]
 }
 
-export function KnownTable({ transactions }: KnownTableProps) {
+export function KnownTable({ transactions, skippedTransactions = [] }: KnownTableProps) {
+  const allTransactions = [
+    ...transactions.map(t => ({ ...t, type: 'rule' as const })),
+    ...skippedTransactions.map(t => ({ ...t, type: 'skipped' as const })),
+  ]
+
   return (
     <Table>
       <TableHeader>
@@ -177,14 +211,69 @@ export function KnownTable({ transactions }: KnownTableProps) {
           <TableHead>Amount</TableHead>
           <TableHead>Counter Party</TableHead>
           <TableHead>Note</TableHead>
-          <TableHead>Rule/Reason</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>Reason</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {allTransactions.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={6} className="text-center text-muted-foreground">
+              No known transactions
+            </TableCell>
+          </TableRow>
+        ) : (
+          allTransactions.map((t) => (
+            <TableRow key={t.id}>
+              <TableCell>{formatDate(t.date)}</TableCell>
+              <TableCell className="font-mono">
+                {formatCurrency(t.amount, t.currency)}
+              </TableCell>
+              <TableCell className="max-w-[150px] truncate" title={t.counter_name || t.counter_account || ""}>
+                {t.counter_name || t.counter_account}
+              </TableCell>
+              <TableCell className="max-w-[200px] truncate" title={t.note || ""}>
+                {t.note || "-"}
+              </TableCell>
+              <TableCell>
+                <Badge variant={t.type === 'rule' ? 'default' : 'secondary'}>
+                  {t.type === 'rule' ? 'Rule' : 'Skipped'}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {t.type === 'rule' ? (t.rule_reason || "-") : (t.skip_reason || "Skipped")}
+              </TableCell>
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  )
+}
+
+interface SkippedTableProps {
+  transactions: Transaction[]
+  onUnskip?: (transaction: Transaction) => void
+}
+
+export function SkippedTable({ transactions, onUnskip }: SkippedTableProps) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Date</TableHead>
+          <TableHead>Amount</TableHead>
+          <TableHead>Counter Party</TableHead>
+          <TableHead>Note</TableHead>
+          <TableHead>Skip Reason</TableHead>
+          {onUnskip && <TableHead>Actions</TableHead>}
         </TableRow>
       </TableHeader>
       <TableBody>
         {transactions.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={5} className="text-center text-muted-foreground">
-              No known transactions
+            <TableCell colSpan={onUnskip ? 6 : 5} className="text-center text-muted-foreground">
+              No skipped transactions
             </TableCell>
           </TableRow>
         ) : (
@@ -200,7 +289,15 @@ export function KnownTable({ transactions }: KnownTableProps) {
               <TableCell className="max-w-[200px] truncate" title={t.note || ""}>
                 {t.note || "-"}
               </TableCell>
-              <TableCell className="text-muted-foreground">{t.rule_reason || "-"}</TableCell>
+              <TableCell className="text-muted-foreground">{t.skip_reason || "Skipped"}</TableCell>
+              {onUnskip && (
+                <TableCell>
+                  <Button size="sm" variant="ghost" onClick={() => onUnskip(t)}>
+                    <Undo2 className="h-4 w-4 mr-1" />
+                    Undo
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))
         )}

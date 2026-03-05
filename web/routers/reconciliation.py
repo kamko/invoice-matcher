@@ -1,6 +1,7 @@
 """Router for reconciliation endpoints."""
 
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Any
 
@@ -551,6 +552,7 @@ def get_month(year_month: str, db: Session = Depends(get_db)):
 
     results = service.get_month_results(month)
 
+    skipped = results.get("skipped", [])
     return MonthResponse(
         year_month=month.year_month,
         status=month.status,
@@ -562,11 +564,13 @@ def get_month(year_month: str, db: Session = Depends(get_db)):
         known_count=month.known_count,
         fee_count=month.fee_count,
         income_count=month.income_count,
+        skipped_count=len(skipped),
         matched=results.get("matched", []),
         unmatched=results.get("unmatched", []),
         known=results.get("known", []),
         fees=results.get("fees", []),
         income=results.get("income", []),
+        skipped=skipped,
         unmatched_invoices=results.get("unmatched_invoices", []),
         error_message=month.error_message,
     )
@@ -653,6 +657,161 @@ def mark_as_known_monthly(
         "rule_id": rule.id,
         "matched_count": matched_count,
         "message": f"Marked {matched_count} transaction(s) as known"
+    }
+
+
+@router.post("/months/{year_month}/skip-transaction")
+def skip_transaction(
+    year_month: str,
+    transaction_id: str = Form(...),
+    reason: str = Form(""),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Skip a transaction for this month only (no rule created)."""
+    reconcile_service = ReconcileService(db)
+
+    month = reconcile_service.get_month(year_month)
+    if not month:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    if not month.results_json:
+        raise HTTPException(status_code=400, detail="No results to modify")
+
+    results = month.results_json.copy()
+    unmatched = results.get("unmatched", [])
+    skipped = results.get("skipped", [])
+
+    # Find and move the transaction
+    found = False
+    new_unmatched = []
+    for trans in unmatched:
+        if trans.get("id") == transaction_id:
+            trans["skip_reason"] = reason or "Skipped"
+            skipped.append(trans)
+            found = True
+        else:
+            new_unmatched.append(trans)
+
+    if not found:
+        raise HTTPException(status_code=404, detail="Transaction not found in unmatched")
+
+    results["unmatched"] = new_unmatched
+    results["skipped"] = skipped
+
+    month.results_json = results
+    month.unmatched_count = len(new_unmatched)
+    flag_modified(month, "results_json")
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Transaction skipped"
+    }
+
+
+@router.post("/months/{year_month}/manual-match")
+def manual_match(
+    year_month: str,
+    transaction_id: str = Form(...),
+    invoice_file_id: str = Form(...),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Manually match a transaction with an existing invoice from the folder."""
+    reconcile_service = ReconcileService(db)
+
+    month = reconcile_service.get_month(year_month)
+    if not month:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    if not month.results_json:
+        raise HTTPException(status_code=400, detail="No results to modify")
+
+    # Find the invoice in the database
+    invoice_payment = db.query(InvoicePayment).filter(
+        InvoicePayment.gdrive_file_id == invoice_file_id
+    ).first()
+
+    if not invoice_payment:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Allow matching same invoice to multiple transactions (e.g., PDF with multiple receipts)
+
+    results = month.results_json.copy()
+    unmatched = results.get("unmatched", [])
+    matched = results.get("matched", [])
+
+    # Find and remove the transaction from unmatched
+    transaction_data = None
+    new_unmatched = []
+    for trans in unmatched:
+        if trans.get("id") == transaction_id:
+            transaction_data = trans
+        else:
+            new_unmatched.append(trans)
+
+    if not transaction_data:
+        raise HTTPException(status_code=404, detail="Transaction not found in unmatched")
+
+    # Extract invoice date and payment type from filename (format: YYYY-MM-DD-NNN_type_vendor.pdf)
+    invoice_date = None
+    payment_type = transaction_data.get("transaction_type", "wire")
+    filename = invoice_payment.filename
+    if filename and len(filename) >= 10:
+        # Try to extract date from filename
+        date_part = filename[:10]
+        if len(date_part) == 10 and date_part[4] == '-' and date_part[7] == '-':
+            invoice_date = date_part
+        # Try to extract payment type (e.g., "cod", "wire")
+        parts = filename.replace('.pdf', '').split('_')
+        if len(parts) >= 2:
+            payment_type = parts[1]
+
+    # Create invoice data from the InvoicePayment record
+    invoice_data = {
+        "file_path": invoice_payment.filename,
+        "filename": invoice_payment.filename,
+        "invoice_date": invoice_date,
+        "invoice_number": None,
+        "payment_type": payment_type,
+        "vendor": invoice_payment.vendor,
+        "amount": str(invoice_payment.amount) if invoice_payment.amount else None,
+        "vs": None,
+        "gdrive_file_id": invoice_payment.gdrive_file_id,
+    }
+
+    # Add to matched
+    matched.append({
+        "transaction": transaction_data,
+        "invoice": invoice_data,
+        "confidence": 1.0,
+        "confidence_pct": 100,
+        "status": "OK",
+        "strategy_scores": {"ManualMatch": 1.0},
+    })
+
+    results["unmatched"] = new_unmatched
+    results["matched"] = matched
+
+    month.results_json = results
+    month.unmatched_count = len(new_unmatched)
+    month.matched_count = len([m for m in matched if m.get("status") == "OK"])
+    flag_modified(month, "results_json")
+
+    # Update invoice payment record (append transaction_id for multi-receipt PDFs)
+    invoice_payment.paid_month = year_month
+    if invoice_payment.transaction_id:
+        # Append to existing transaction IDs (comma-separated)
+        existing_ids = invoice_payment.transaction_id.split(',')
+        if transaction_id not in existing_ids:
+            invoice_payment.transaction_id = f"{invoice_payment.transaction_id},{transaction_id}"
+    else:
+        invoice_payment.transaction_id = transaction_id
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Transaction manually matched with {invoice_payment.filename}"
     }
 
 

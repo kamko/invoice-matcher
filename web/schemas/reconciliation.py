@@ -106,12 +106,14 @@ class MonthResponse(BaseModel):
     known_count: int
     fee_count: int = 0
     income_count: int = 0
+    skipped_count: int = 0
 
     matched: List[MatchResultResponse] = []
     unmatched: List[TransactionResponse] = []
     known: List[TransactionResponse] = []
     fees: List[TransactionResponse] = []
     income: List[TransactionResponse] = []
+    skipped: List[TransactionResponse] = []
     unmatched_invoices: List[Dict[str, Any]] = []
 
     error_message: Optional[str] = None

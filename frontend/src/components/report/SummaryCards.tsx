@@ -6,9 +6,12 @@ interface SummaryCardsProps {
   review: number
   unmatched: number
   known: number
+  skipped?: number
 }
 
-export function SummaryCards({ matched, review, unmatched, known }: SummaryCardsProps) {
+export function SummaryCards({ matched, review, unmatched, known, skipped = 0 }: SummaryCardsProps) {
+  // Known includes both rule-matched and skipped transactions
+  const totalKnown = known + skipped
   return (
     <div className="grid gap-4 md:grid-cols-4">
       <Card>
@@ -56,9 +59,9 @@ export function SummaryCards({ matched, review, unmatched, known }: SummaryCards
           <Bookmark className="h-4 w-4 text-blue-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-blue-600">{known}</div>
+          <div className="text-2xl font-bold text-blue-600">{totalKnown}</div>
           <p className="text-xs text-muted-foreground">
-            Recognized by rules
+            Rules ({known}) + Skipped ({skipped})
           </p>
         </CardContent>
       </Card>
