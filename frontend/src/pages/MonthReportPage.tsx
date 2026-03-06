@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link } from "wouter"
 import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useSkipTransaction, useManualMatch, type Transaction } from "@/api/client"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useRenameInvoiceFile, useSkipTransaction, useManualMatch, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
@@ -32,6 +32,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const matchWithPdf = useMatchWithPdfMonthly()
   const uploadInvoice = useUploadInvoice()
   const renameInvoice = useRenameInvoice()
+  const renameInvoiceFile = useRenameInvoiceFile()
   const skipTransaction = useSkipTransaction()
   const manualMatch = useManualMatch()
 
@@ -65,12 +66,14 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
     window.location.reload()
   }
 
-  const handleUploadPdf = async (file: File) => {
+  const handleUploadPdf = async (file: File, vendor?: string, invoiceDate?: string) => {
     if (!uploadPdfTransaction) return
     await matchWithPdf.mutateAsync({
       yearMonth,
       transactionId: uploadPdfTransaction.id,
       file,
+      vendor,
+      invoiceDate,
     })
     setUploadPdfTransaction(null)
     window.location.reload()
@@ -278,6 +281,11 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
               refetch()
             }}
             isRenaming={renameInvoice.isPending}
+            onReanalyze={async (fileId, vendor, invoiceDate) => {
+              await renameInvoiceFile.mutateAsync({ fileId, vendor, invoiceDate })
+              refetch()
+            }}
+            isReanalyzing={renameInvoiceFile.isPending}
           />
         </TabsContent>
       </Tabs>

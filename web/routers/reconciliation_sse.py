@@ -314,6 +314,7 @@ def serialize_invoice(inv) -> dict:
         "gdrive_file_id": inv.gdrive_file_id,
         "is_credit_note": inv.is_credit_note,
         "is_cash": inv.is_cash,
+        "receipt_index": inv.receipt_index,
     }
 
 
@@ -720,9 +721,11 @@ async def monthly_reconcile_stream(
 
             # Clear records for invoices from THIS month's folder only
             # (we'll recreate them based on current matches)
+            # BUT preserve manually uploaded invoices - they shouldn't be deleted by sync
             if request.gdrive_folder_id:
                 db.query(InvoicePayment).filter(
-                    InvoicePayment.invoice_month == year_month
+                    InvoicePayment.invoice_month == year_month,
+                    InvoicePayment.is_manual_upload == False  # Preserve manual uploads
                 ).delete()
 
             # Record matched invoices with their payment info (includes credit notes)
@@ -736,30 +739,33 @@ async def monthly_reconcile_stream(
                             invoice_month=source_month,
                             gdrive_file_id=m.invoice.gdrive_file_id,
                             filename=m.invoice.filename,
+                            receipt_index=m.invoice.receipt_index,
                             paid_month=year_month,
                             transaction_id=m.transaction.id,
-                            amount=Decimal(str(m.transaction.amount)) if m.transaction.amount else None,
+                            amount=Decimal(str(m.invoice.amount)) if m.invoice.amount else None,
                             vendor=m.invoice.vendor,
                         )
                         db.add(payment)
                     else:
                         # Invoice is from previous month folder - update existing record
                         existing = db.query(InvoicePayment).filter(
-                            InvoicePayment.gdrive_file_id == m.invoice.gdrive_file_id
+                            InvoicePayment.gdrive_file_id == m.invoice.gdrive_file_id,
+                            InvoicePayment.receipt_index == m.invoice.receipt_index
                         ).first()
                         if existing:
                             existing.paid_month = year_month
                             existing.transaction_id = m.transaction.id
-                            existing.amount = Decimal(str(m.transaction.amount)) if m.transaction.amount else None
+                            # Keep original invoice amount, don't overwrite with transaction amount
                         else:
                             # No existing record (prev month not synced yet), create one
                             payment = InvoicePayment(
                                 invoice_month=source_month,
                                 gdrive_file_id=m.invoice.gdrive_file_id,
                                 filename=m.invoice.filename,
+                                receipt_index=m.invoice.receipt_index,
                                 paid_month=year_month,
                                 transaction_id=m.transaction.id,
-                                amount=Decimal(str(m.transaction.amount)) if m.transaction.amount else None,
+                                amount=Decimal(str(m.invoice.amount)) if m.invoice.amount else None,
                                 vendor=m.invoice.vendor,
                             )
                             db.add(payment)
@@ -773,6 +779,7 @@ async def monthly_reconcile_stream(
                             invoice_month=source_month,
                             gdrive_file_id=inv.gdrive_file_id,
                             filename=inv.filename,
+                            receipt_index=inv.receipt_index,
                             paid_month=year_month,  # Cash = paid immediately
                             transaction_id="CASH",  # Special marker for cash payments
                             amount=Decimal(str(inv.amount)) if inv.amount else None,
@@ -791,6 +798,7 @@ async def monthly_reconcile_stream(
                             invoice_month=year_month,
                             gdrive_file_id=inv.gdrive_file_id,
                             filename=inv.filename,
+                            receipt_index=inv.receipt_index,
                             paid_month=None,  # Not paid/credited yet
                             transaction_id=None,
                             amount=Decimal(str(inv.amount)) if inv.amount else None,
@@ -1211,20 +1219,21 @@ async def batch_sync_stream(
                                 invoice_month=source_month,
                                 gdrive_file_id=m_result.invoice.gdrive_file_id,
                                 filename=m_result.invoice.filename,
+                                receipt_index=m_result.invoice.receipt_index,
                                 paid_month=ym,
                                 transaction_id=m_result.transaction.id,
-                                amount=Decimal(str(m_result.transaction.amount)) if m_result.transaction.amount else None,
+                                amount=Decimal(str(m_result.invoice.amount)) if m_result.invoice.amount else None,
                                 vendor=m_result.invoice.vendor,
                             )
                             db.add(payment)
                         else:
                             existing = db.query(InvoicePayment).filter(
-                                InvoicePayment.gdrive_file_id == m_result.invoice.gdrive_file_id
+                                InvoicePayment.gdrive_file_id == m_result.invoice.gdrive_file_id,
+                                InvoicePayment.receipt_index == m_result.invoice.receipt_index
                             ).first()
                             if existing:
                                 existing.paid_month = ym
                                 existing.transaction_id = m_result.transaction.id
-                                existing.amount = Decimal(str(m_result.transaction.amount)) if m_result.transaction.amount else None
 
                 for inv in all_unmatched_inv:
                     if inv.gdrive_file_id and getattr(inv, 'source_month', ym) == ym:
@@ -1232,6 +1241,7 @@ async def batch_sync_stream(
                             invoice_month=ym,
                             gdrive_file_id=inv.gdrive_file_id,
                             filename=inv.filename,
+                            receipt_index=inv.receipt_index,
                             paid_month=None,
                             transaction_id=None,
                             amount=Decimal(str(inv.amount)) if inv.amount else None,
@@ -1246,6 +1256,7 @@ async def batch_sync_stream(
                             invoice_month=ym,
                             gdrive_file_id=inv.gdrive_file_id,
                             filename=inv.filename,
+                            receipt_index=inv.receipt_index,
                             paid_month=ym,  # Cash = paid immediately
                             transaction_id="CASH",
                             amount=Decimal(str(inv.amount)) if inv.amount else None,

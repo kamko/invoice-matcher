@@ -130,6 +130,7 @@ export interface MonthData {
   matched: MatchResult[]
   unmatched: Transaction[]
   known: Transaction[]
+  skipped: Transaction[]
   fees: Transaction[]
   income: Transaction[]
   unmatched_invoices: Invoice[]
@@ -433,17 +434,52 @@ export function useManualMatch() {
   })
 }
 
+// Parse PDF preview (extract data without uploading)
+export interface ParsePdfResponse {
+  success: boolean
+  invoice_date: string | null
+  vendor: string | null
+  amount: string | null
+  vs: string | null
+  message?: string
+}
+
+export function useParsePdf() {
+  return useMutation({
+    mutationFn: async (file: File): Promise<ParsePdfResponse> => {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/parse-pdf', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+  })
+}
+
 export function useMatchWithPdfMonthly() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ yearMonth, transactionId, file }: {
+    mutationFn: async ({ yearMonth, transactionId, file, vendor, invoiceDate }: {
       yearMonth: string
       transactionId: string
       file: File
+      vendor?: string  // Optional: override extracted vendor
+      invoiceDate?: string  // Optional: override extracted date (YYYY-MM-DD)
     }): Promise<MatchWithPdfResponse> => {
       const formData = new FormData()
       formData.append('transaction_id', transactionId)
       formData.append('file', file)
+      if (vendor) formData.append('vendor', vendor)
+      if (invoiceDate) formData.append('invoice_date', invoiceDate)
 
       const response = await fetch(`/api/months/${yearMonth}/match-with-pdf`, {
         method: 'POST',
@@ -566,6 +602,67 @@ export function useRenameInvoice() {
       // Invalidate queries that might show the filename
       queryClient.invalidateQueries({ queryKey: ['months'] })
       queryClient.invalidateQueries({ queryKey: ['month-detail'] })
+    },
+  })
+}
+
+export interface ParseCachedInvoiceResponse {
+  success: boolean
+  vendor: string | null
+  amount: string | null
+  invoice_date: string | null
+  vs: string | null
+  message?: string
+}
+
+export function useParseCachedInvoice() {
+  return useMutation({
+    mutationFn: async (fileId: string): Promise<ParseCachedInvoiceResponse> => {
+      const response = await fetch(`${API_BASE}/invoices/${fileId}/parse`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }))
+        throw new Error(err.detail || 'Failed to parse')
+      }
+      return response.json()
+    },
+  })
+}
+
+export interface RenameInvoiceResponse {
+  success: boolean
+  old_filename: string
+  new_filename: string
+  vendor: string | null
+  amount: string | null
+  invoice_date: string | null
+  renamed_in_gdrive: boolean
+}
+
+export function useRenameInvoiceFile() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ fileId, vendor, invoiceDate }: {
+      fileId: string
+      vendor: string
+      invoiceDate: string
+    }): Promise<RenameInvoiceResponse> => {
+      const formData = new FormData()
+      formData.append('vendor', vendor)
+      formData.append('invoice_date', invoiceDate)
+
+      const response = await fetch(`${API_BASE}/invoices/${fileId}/rename`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }))
+        throw new Error(err.detail || 'Failed to rename invoice')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['months'] })
+      queryClient.invalidateQueries({ queryKey: ['month-invoices'] })
     },
   })
 }

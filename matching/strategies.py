@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 from models.invoice import Invoice
 from models.transaction import Transaction
 from parsers.csv_parser import extract_vendor_from_note
+from parsers.llm_extractor import score_transaction_invoice_match
 
 
 class MatchStrategy(ABC):
@@ -47,7 +48,7 @@ class AmountStrategy(MatchStrategy):
             return 0.0
 
         trans_amt = transaction.abs_amount
-        inv_amt = invoice.amount
+        inv_amt = abs(invoice.amount)  # Use absolute value for comparison
 
         diff = abs(trans_amt - inv_amt)
 
@@ -55,7 +56,10 @@ class AmountStrategy(MatchStrategy):
             return 1.0
 
         # Partial score for close matches (within 5%)
-        pct_diff = float(diff / max(trans_amt, inv_amt))
+        max_amt = max(trans_amt, inv_amt)
+        if max_amt == 0:
+            return 0.0
+        pct_diff = float(diff / max_amt)
         if pct_diff <= 0.05:
             return 1.0 - pct_diff
 
@@ -63,31 +67,70 @@ class AmountStrategy(MatchStrategy):
 
 
 class VendorStrategy(MatchStrategy):
-    """Match based on vendor name similarity."""
+    """Match based on vendor name similarity using LLM comparison."""
+
+    # Enable debug logging
+    DEBUG = False
 
     @property
     def weight(self) -> float:
         return 0.25
 
     def score(self, transaction: Transaction, invoice: Invoice) -> float:
-        # Extract vendor from transaction note
+        # Extract vendor from transaction note (regex-based)
         trans_vendor = extract_vendor_from_note(transaction.note).lower()
         inv_vendor = invoice.vendor.lower().replace("-", " ")
 
-        if not trans_vendor or not inv_vendor:
+        if not inv_vendor:
             return 0.0
 
-        # Use fuzzy matching
-        # Try partial ratio for cases where one name contains the other
-        ratio = fuzz.partial_ratio(trans_vendor, inv_vendor)
+        # Try LLM extraction if regex extraction is weak
+        if not trans_vendor or len(trans_vendor) < 3:
+            try:
+                from parsers.llm_extractor import get_vendor_from_note_cached
+                llm_vendor = get_vendor_from_note_cached(transaction.note)
+                if llm_vendor:
+                    trans_vendor = llm_vendor
+            except Exception:
+                pass
 
-        # Also try token set ratio for different word orders
+        if not trans_vendor:
+            # No vendor info available - return neutral score
+            # This happens for wire transfers with empty notes
+            return 0.5
+
+        # Quick check: if one contains the other, it's a match
+        if inv_vendor in trans_vendor or trans_vendor in inv_vendor:
+            if self.DEBUG:
+                print(f"  [VENDOR] substring match: '{trans_vendor}' ~ '{inv_vendor}' = 1.0")
+            return 1.0
+
+        # Use LLM for vendor comparison (cached)
+        # LLM returns 1.0 for YES (same company) and 0.0 for NO (different)
+        try:
+            from parsers.llm_extractor import compare_vendors_llm
+            llm_score = compare_vendors_llm(trans_vendor, inv_vendor)
+            # LLM gave us an answer - use it directly (even if 0.0)
+            # Do NOT fall back to fuzzy matching - trust the LLM
+            if self.DEBUG:
+                print(f"  [VENDOR] LLM: '{trans_vendor}' ~ '{inv_vendor}' = {llm_score}")
+            return llm_score
+        except RuntimeError as e:
+            # LLM unavailable - fall back to fuzzy matching
+            if self.DEBUG:
+                print(f"  [VENDOR] LLM unavailable ({e}), using fuzzy")
+        except Exception as e:
+            # Unexpected error - log and fall back
+            print(f"LLM vendor comparison error: {e}")
+
+        # Fallback to fuzzy matching only if LLM API completely fails
+        simple_ratio = fuzz.ratio(trans_vendor, inv_vendor)
         token_ratio = fuzz.token_set_ratio(trans_vendor, inv_vendor)
+        best_ratio = max(simple_ratio, token_ratio)
 
-        # Use the better score
-        best_ratio = max(ratio, token_ratio)
+        if self.DEBUG:
+            print(f"  [VENDOR] fuzzy: '{trans_vendor}' ~ '{inv_vendor}' = {best_ratio/100.0}")
 
-        # Normalize to 0-1 scale
         return best_ratio / 100.0
 
 
@@ -179,3 +222,28 @@ class VSStrategy(MatchStrategy):
             return 0.5  # Neutral - don't penalize or reward
 
         return 0.0
+
+
+class LLMStrategy(MatchStrategy):
+    """Use LLM to score the match based on all available context."""
+
+    @property
+    def weight(self) -> float:
+        return 1.0  # LLM does all scoring
+
+    def score(self, transaction: Transaction, invoice: Invoice) -> float:
+        return score_transaction_invoice_match(
+            trans_date=str(transaction.date),
+            trans_amount=str(transaction.amount),
+            trans_note=transaction.note or "",
+            trans_counter_name=transaction.counter_name or "",
+            trans_counter_account=transaction.counter_account or "",
+            trans_vs=transaction.vs or "",
+            trans_type=transaction.transaction_type,
+            inv_filename=invoice.filename,
+            inv_date=str(invoice.invoice_date),
+            inv_amount=str(invoice.amount) if invoice.amount else "",
+            inv_vendor=invoice.vendor,
+            inv_vs=invoice.vs or "",
+            inv_type=invoice.payment_type,
+        )

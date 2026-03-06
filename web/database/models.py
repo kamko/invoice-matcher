@@ -119,6 +119,9 @@ class InvoicePayment(Base):
 
     An invoice stored in month A's folder might be paid in month B.
     This table records that relationship.
+
+    For multi-receipt PDFs, multiple records exist for the same gdrive_file_id,
+    distinguished by receipt_index.
     """
 
     __tablename__ = "invoice_payments"
@@ -130,6 +133,8 @@ class InvoicePayment(Base):
     gdrive_file_id = Column(String(255), nullable=False, index=True)
     # Invoice filename for display
     filename = Column(String(255), nullable=False)
+    # Receipt index within the PDF (0 for single-receipt, 0/1/2... for multi-receipt)
+    receipt_index = Column(Integer, nullable=False, default=0)
     # The month when payment was made (may differ from invoice_month)
     paid_month = Column(String(7), nullable=True, index=True)  # "2026-03" or None if unpaid
     # Transaction ID that paid this invoice
@@ -138,6 +143,8 @@ class InvoicePayment(Base):
     amount = Column(Numeric(12, 2), nullable=True)
     # Invoice vendor
     vendor = Column(String(255), nullable=True)
+    # Flag for manually uploaded invoices (protected from sync override)
+    is_manual_upload = Column(Boolean, default=False, nullable=False)
     # When this record was created/updated
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

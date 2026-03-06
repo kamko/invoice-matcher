@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Upload, ExternalLink, Check, Clock, Undo2, Pencil, Link } from "lucide-react"
+import { Upload, ExternalLink, Check, Clock, Undo2, Pencil, Link, RefreshCw } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Transaction, MatchResult, FolderInvoice } from "@/api/client"
 import { RenameInvoiceModal } from "./RenameInvoiceModal"
+import { ReanalyzeInvoiceModal } from "./ReanalyzeInvoiceModal"
 
 interface MatchedTableProps {
   matches: MatchResult[]
@@ -395,10 +396,13 @@ interface FolderInvoicesTableProps {
   formatYearMonth: (ym: string) => string
   onRename?: (fileId: string, newFilename: string) => Promise<void>
   isRenaming?: boolean
+  onReanalyze?: (fileId: string, vendor?: string, invoiceDate?: string) => Promise<void>
+  isReanalyzing?: boolean
 }
 
-export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRenaming }: FolderInvoicesTableProps) {
+export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRenaming, onReanalyze, isReanalyzing }: FolderInvoicesTableProps) {
   const [renameInvoice, setRenameInvoice] = React.useState<FolderInvoice | null>(null)
+  const [reanalyzeInvoice, setReanalyzeInvoice] = React.useState<FolderInvoice | null>(null)
 
   // Helper to detect credit notes from filename
   const isCreditNote = (filename: string) => {
@@ -452,6 +456,13 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
     }
   }
 
+  const handleReanalyze = async (fileId: string, vendor?: string, invoiceDate?: string) => {
+    if (onReanalyze) {
+      await onReanalyze(fileId, vendor, invoiceDate)
+      setReanalyzeInvoice(null)
+    }
+  }
+
   return (
     <>
       <RenameInvoiceModal
@@ -460,6 +471,13 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
         onOpenChange={(open) => !open && setRenameInvoice(null)}
         onRename={handleRename}
         isLoading={isRenaming}
+      />
+      <ReanalyzeInvoiceModal
+        invoice={reanalyzeInvoice}
+        open={reanalyzeInvoice !== null}
+        onOpenChange={(open) => !open && setReanalyzeInvoice(null)}
+        onReanalyze={handleReanalyze}
+        isLoading={isReanalyzing}
       />
       <Table>
         <TableHeader>
@@ -509,16 +527,30 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
                   "-"
                 )}
               </TableCell>
-              {onRename && (
+              {(onRename || onReanalyze) && (
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setRenameInvoice(inv)}
-                    title="Rename invoice"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-1">
+                    {onReanalyze && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReanalyzeInvoice(inv)}
+                        title="Re-analyze invoice (re-extract vendor, amount, date)"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {onRename && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setRenameInvoice(inv)}
+                        title="Rename invoice"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               )}
             </TableRow>

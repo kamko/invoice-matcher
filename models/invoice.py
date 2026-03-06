@@ -7,7 +7,11 @@ from typing import Optional
 
 @dataclass
 class Invoice:
-    """Represents an invoice extracted from PDF."""
+    """Represents an invoice extracted from PDF.
+
+    For multi-receipt PDFs, multiple Invoice objects are created with
+    the same file_path but different receipt_index values.
+    """
 
     file_path: Path
     invoice_date: date
@@ -17,6 +21,8 @@ class Invoice:
     amount: Optional[Decimal] = None
     vs: Optional[str] = None  # Variable Symbol extracted from PDF
     gdrive_file_id: Optional[str] = None  # Google Drive file ID
+    receipt_index: int = 0  # Index within multi-receipt PDFs (0 for single-receipt)
+    _is_credit_note: Optional[bool] = None  # Explicit credit note flag (overrides filename detection)
 
     @property
     def filename(self) -> str:
@@ -44,6 +50,9 @@ class Invoice:
         Credit notes represent refunds/credits coming back to the company.
         They should match with positive (income) transactions, not expenses.
         """
+        # Explicit flag takes precedence (for multi-page PDFs with mixed content)
+        if self._is_credit_note is not None:
+            return self._is_credit_note
         filename_lower = self.filename.lower()
         return "credit-note" in filename_lower or "credit_note" in filename_lower
 

@@ -246,7 +246,8 @@ class GDriveService:
         Args:
             folder_id: Google Drive folder ID
             db: Optional SQLAlchemy session for caching PDFs
-            force_refresh: If True, always download from Google Drive (bypasses cache read, but still updates cache)
+            force_refresh: If True, re-fetch file list from GDrive (discovers new files).
+                          Cached files with matching MD5 are still used (not re-downloaded).
 
         Returns:
             Tuple of (directory_path, list_of_filenames, dict_mapping_filename_to_file_id)
@@ -289,20 +290,29 @@ class GDriveService:
             file_path = session_dir / file_name
 
             content = None
+            cache_reason = None
 
-            # Check cache first (unless force_refresh is True)
-            if db and not force_refresh:
+            # Check cache first - use cache if MD5 matches (even with force_refresh)
+            # force_refresh only means "re-fetch file list", not "re-download unchanged files"
+            if db:
                 cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
                 if cached:
-                    # Verify checksum if available
-                    if md5_checksum is None or cached.md5_checksum == md5_checksum:
-                        # Cache hit - use cached content
+                    # Use cache if MD5 checksum matches (file unchanged)
+                    if md5_checksum and cached.md5_checksum == md5_checksum:
+                        # Cache hit - file unchanged, use cached content
                         content = cached.content
                         cached.last_accessed_at = datetime.utcnow()
                         cache_hits += 1
+                    else:
+                        cache_reason = f"MD5 mismatch: cached={cached.md5_checksum}, gdrive={md5_checksum}"
+                else:
+                    cache_reason = "not in cache"
+            else:
+                cache_reason = "no db session"
 
             if content is None:
                 # Cache miss - download from Google Drive
+                print(f"  [GDRIVE] Downloading {file_name}: {cache_reason}", flush=True)
                 request = service.files().get_media(fileId=file_id)
                 file_buffer = io.BytesIO()
                 downloader = MediaIoBaseDownload(file_buffer, request)
@@ -345,6 +355,11 @@ class GDriveService:
         # Commit cache updates
         if db:
             db.commit()
+
+        # Log cache efficiency
+        total_files = len(downloaded_files)
+        if total_files > 0:
+            print(f"GDrive download: {total_files} files ({cache_hits} cached, {cache_misses} downloaded)", flush=True)
 
         return session_dir, downloaded_files, file_id_map
 
