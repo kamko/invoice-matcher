@@ -66,16 +66,18 @@ class Matcher:
     def match_all(
         self,
         transactions: List[Transaction],
-        invoices: List[Invoice]
+        invoices: List[Invoice],
+        year_month: str = None
     ) -> Tuple[List[MatchResult], List[Transaction], List[Invoice]]:
         """
-        Match transactions to invoices using two-phase approach:
-        1. Rule-based confident matches (exact amount + good vendor score)
-        2. LLM selection for remaining ambiguous cases
+        Match transactions to invoices using two-pass approach:
+        1. First pass: Match with same-month invoices only
+        2. Second pass: Match remaining with previous-month invoices (last resort)
 
         Args:
             transactions: List of bank transactions
             invoices: List of invoices
+            year_month: Current month being processed (YYYY-MM format)
 
         Returns:
             Tuple of (matched results, unmatched transactions, unmatched invoices)
@@ -87,43 +89,55 @@ class Matcher:
         matched_transactions: set = set()
         matched_invoices: set = set()  # (file_path, receipt_index) tuples
 
-        # Phase 1: Rule-based confident matching
-        rule_strategies = [AmountStrategy(), VendorStrategy(), DateStrategy(), VSStrategy()]
+        # Separate invoices by source month
+        same_month_invoices = []
+        prev_month_invoices = []
+        for inv in invoices:
+            source_month = getattr(inv, 'source_month', year_month)
+            if source_month == year_month:
+                same_month_invoices.append(inv)
+            else:
+                prev_month_invoices.append(inv)
 
-        all_matches: List[MatchResult] = []
-        for transaction in matchable_transactions:
-            for invoice in invoices:
-                if not self._is_compatible(transaction, invoice):
+        # Helper to find matches for a set of invoices
+        def find_matches(trans_list: List[Transaction], inv_list: List[Invoice]) -> List[MatchResult]:
+            matches = []
+            amount_strategy = AmountStrategy()
+            vendor_strategy = VendorStrategy()
+
+            for transaction in trans_list:
+                if transaction.id in matched_transactions:
                     continue
 
-                # Calculate rule-based scores
-                total_score = 0.0
-                strategy_scores = {}
-                for strategy in rule_strategies:
-                    score = strategy.score(transaction, invoice)
-                    weighted_score = score * strategy.weight
-                    total_score += weighted_score
-                    strategy_scores[strategy.__class__.__name__] = score
+                for invoice in inv_list:
+                    inv_key = (str(invoice.file_path), invoice.receipt_index)
+                    if inv_key in matched_invoices:
+                        continue
+                    if not self._is_compatible(transaction, invoice):
+                        continue
 
-                amount_score = strategy_scores.get("AmountStrategy", 0)
-                vendor_score = strategy_scores.get("VendorStrategy", 0)
+                    amount_score = amount_strategy.score(transaction, invoice)
+                    vendor_score = vendor_strategy.score(transaction, invoice)
 
-                # Skip if amounts don't match at all
-                if amount_score < 0.5:
-                    continue
+                    # Confident match: exact amount + reasonable vendor
+                    if amount_score >= 0.95 and vendor_score >= 0.5:
+                        matches.append(MatchResult(
+                            transaction=transaction,
+                            invoice=invoice,
+                            confidence=0.9 if vendor_score >= 0.7 else 0.7,
+                            strategy_scores={
+                                "AmountStrategy": amount_score,
+                                "VendorStrategy": vendor_score
+                            }
+                        ))
+            return matches
 
-                # Confident match: exact amount + good vendor
-                if amount_score >= 0.95 and vendor_score >= 0.6:
-                    all_matches.append(MatchResult(
-                        transaction=transaction,
-                        invoice=invoice,
-                        confidence=total_score,
-                        strategy_scores=strategy_scores
-                    ))
+        # Pass 1: Match with same-month invoices (preferred)
+        same_month_matches = find_matches(matchable_transactions, same_month_invoices)
+        # Sort by vendor score to prefer better matches
+        same_month_matches.sort(key=lambda m: -m.strategy_scores.get("VendorStrategy", 0))
 
-        # Sort by confidence and greedily assign
-        all_matches.sort(key=lambda m: -m.confidence)
-        for match in all_matches:
+        for match in same_month_matches:
             trans_id = match.transaction.id
             inv_key = (str(match.invoice.file_path), match.invoice.receipt_index)
             if trans_id in matched_transactions or inv_key in matched_invoices:
@@ -132,74 +146,22 @@ class Matcher:
             matched_transactions.add(trans_id)
             matched_invoices.add(inv_key)
 
-        # Phase 2: LLM selection for remaining transactions
-        if self.use_llm:
-            from parsers.llm_extractor import select_best_invoice_llm
+        # Pass 2: Match remaining with previous-month invoices (last resort)
+        remaining_transactions = [t for t in matchable_transactions if t.id not in matched_transactions]
+        prev_month_matches = find_matches(remaining_transactions, prev_month_invoices)
+        prev_month_matches.sort(key=lambda m: -m.strategy_scores.get("VendorStrategy", 0))
 
-            remaining_transactions = [
-                t for t in matchable_transactions
-                if t.id not in matched_transactions
-            ]
-            remaining_invoices = [
-                inv for inv in invoices
-                if (str(inv.file_path), inv.receipt_index) not in matched_invoices
-            ]
-
-            for transaction in remaining_transactions:
-                # Find candidate invoices (compatible + amount within 10%)
-                candidates = []
-                candidate_invoices = []
-                for invoice in remaining_invoices:
-                    if not self._is_compatible(transaction, invoice):
-                        continue
-                    if invoice.amount is None:
-                        continue
-                    trans_amt = abs(transaction.amount)
-                    inv_amt = abs(invoice.amount)
-                    diff = abs(trans_amt - inv_amt)
-                    max_amt = max(trans_amt, inv_amt)
-                    if max_amt > 0 and float(diff / max_amt) <= 0.10:
-                        candidates.append({
-                            "filename": invoice.filename,
-                            "date": str(invoice.invoice_date),
-                            "amount": str(invoice.amount),
-                            "vendor": invoice.vendor,
-                            "type": invoice.payment_type,
-                            "vs": invoice.vs or "",
-                        })
-                        candidate_invoices.append(invoice)
-
-                if not candidates:
-                    continue
-
-                # Ask LLM to select
-                idx, confidence = select_best_invoice_llm(
-                    trans_date=str(transaction.date),
-                    trans_amount=str(transaction.amount),
-                    trans_note=transaction.note or "",
-                    trans_counter_name=transaction.counter_name or "",
-                    trans_vs=transaction.vs or "",
-                    trans_type=transaction.transaction_type,
-                    candidates=candidates,
-                )
-
-                if idx >= 0 and confidence >= 0.50:
-                    invoice = candidate_invoices[idx]
-                    inv_key = (str(invoice.file_path), invoice.receipt_index)
-                    if inv_key not in matched_invoices:
-                        matched_results.append(MatchResult(
-                            transaction=transaction,
-                            invoice=invoice,
-                            confidence=confidence,
-                            strategy_scores={"LLMStrategy": confidence}
-                        ))
-                        matched_transactions.add(transaction.id)
-                        matched_invoices.add(inv_key)
-                        # Remove from remaining
-                        remaining_invoices = [
-                            inv for inv in remaining_invoices
-                            if (str(inv.file_path), inv.receipt_index) != inv_key
-                        ]
+        for match in prev_month_matches:
+            trans_id = match.transaction.id
+            inv_key = (str(match.invoice.file_path), match.invoice.receipt_index)
+            if trans_id in matched_transactions or inv_key in matched_invoices:
+                continue
+            # Mark as REVIEW since it's cross-month
+            match.confidence = 0.6  # Will show as REVIEW status
+            match.strategy_scores["CrossMonth"] = 1.0
+            matched_results.append(match)
+            matched_transactions.add(trans_id)
+            matched_invoices.add(inv_key)
 
         # Find final unmatched
         unmatched_transactions = [

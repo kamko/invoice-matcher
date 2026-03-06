@@ -127,8 +127,12 @@ class MonthListItem(BaseModel):
 
     year_month: str
     status: str
-    matched_count: int
-    unmatched_count: int
+    matched_count: Optional[int] = 0
+    unmatched_count: Optional[int] = 0
+    review_count: Optional[int] = 0
+    known_count: Optional[int] = 0
+    fee_count: Optional[int] = 0
+    income_count: Optional[int] = 0
     last_synced_at: Optional[datetime] = None
     gdrive_folder_id: Optional[str] = None
     gdrive_folder_name: Optional[str] = None

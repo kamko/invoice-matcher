@@ -353,6 +353,7 @@ async def match_with_pdf(
         invoice_data = {
             "file_path": gdrive_filename if gdrive_file_id else str(invoice.file_path),
             "filename": gdrive_filename,
+            "gdrive_file_id": gdrive_file_id,  # Include for clickable links
             "invoice_date": str(invoice.invoice_date) if invoice.invoice_date else None,
             "invoice_number": invoice.invoice_number,
             "payment_type": payment_type,
@@ -441,8 +442,12 @@ def list_months(db: Session = Depends(get_db)):
         MonthListItem(
             year_month=m.year_month,
             status=m.status,
-            matched_count=m.matched_count,
-            unmatched_count=m.unmatched_count,
+            matched_count=m.matched_count or 0,
+            unmatched_count=m.unmatched_count or 0,
+            review_count=m.review_count or 0,
+            known_count=m.known_count or 0,
+            fee_count=m.fee_count or 0,
+            income_count=m.income_count or 0,
             last_synced_at=m.last_synced_at,
             gdrive_folder_id=m.gdrive_folder_id,
             gdrive_folder_name=m.gdrive_folder_name,
@@ -975,6 +980,7 @@ async def match_with_pdf_monthly(
         invoice_data = {
             "file_path": gdrive_filename if gdrive_file_id else str(invoice.file_path),
             "filename": gdrive_filename,
+            "gdrive_file_id": gdrive_file_id,  # Include for clickable links
             "invoice_date": invoice_date_str if invoice_date_str != "unknown" else None,
             "invoice_number": invoice.invoice_number,
             "payment_type": payment_type,
@@ -1009,7 +1015,23 @@ async def match_with_pdf_monthly(
             month.unmatched_count = len(unmatched)
             month.matched_count = len([m for m in matched if m.get("status") == "OK"])
             flag_modified(month, "results_json")
-            db.commit()
+
+        # Create InvoicePayment record so it appears in Folder Invoices tab
+        if gdrive_file_id:
+            payment = InvoicePayment(
+                invoice_month=year_month,
+                gdrive_file_id=gdrive_file_id,
+                filename=gdrive_filename,
+                receipt_index=0,
+                paid_month=year_month,  # Mark as paid
+                transaction_id=transaction_id,
+                amount=invoice.amount,
+                vendor=final_vendor,
+                is_manual_upload=True,  # Protect from sync override
+            )
+            db.add(payment)
+
+        db.commit()
 
         return MatchWithPdfResponse(
             success=True,
@@ -1079,23 +1101,48 @@ def get_month_invoices(
     """Get all invoices for a month with their payment status.
 
     Returns invoices from this month's folder, indicating whether they've been paid
-    and in which month the payment occurred.
+    and in which month the payment occurred. Groups multiple receipts from the same
+    PDF file into a single entry.
     """
     # Get all invoice payments for this month (invoices stored in this month's folder)
     payments = db.query(InvoicePayment).filter(
         InvoicePayment.invoice_month == year_month
     ).all()
 
-    invoices = []
+    # Group by gdrive_file_id to handle multi-page PDFs
+    # Show as "paid" if ANY receipt from the file is matched
+    file_groups: dict = {}
     for p in payments:
+        file_id = p.gdrive_file_id
+        if file_id not in file_groups:
+            file_groups[file_id] = {
+                "gdrive_file_id": file_id,
+                "filename": p.filename,
+                "vendor": p.vendor,
+                "amount": p.amount,
+                "status": "unpaid",
+                "paid_month": None,
+                "transaction_id": None,
+            }
+
+        # If this receipt is paid, mark the whole file as paid
+        if p.paid_month:
+            file_groups[file_id]["status"] = "paid"
+            file_groups[file_id]["paid_month"] = p.paid_month
+            file_groups[file_id]["transaction_id"] = p.transaction_id
+            # Use the matched receipt's amount as the display amount
+            file_groups[file_id]["amount"] = p.amount
+
+    invoices = []
+    for data in file_groups.values():
         invoices.append({
-            "gdrive_file_id": p.gdrive_file_id,
-            "filename": p.filename,
-            "vendor": p.vendor,
-            "amount": str(p.amount) if p.amount else None,
-            "status": "paid" if p.paid_month else "unpaid",
-            "paid_month": p.paid_month,
-            "transaction_id": p.transaction_id,
+            "gdrive_file_id": data["gdrive_file_id"],
+            "filename": data["filename"],
+            "vendor": data["vendor"],
+            "amount": str(data["amount"]) if data["amount"] else None,
+            "status": data["status"],
+            "paid_month": data["paid_month"],
+            "transaction_id": data["transaction_id"],
         })
 
     return {"invoices": invoices, "total": len(invoices)}
@@ -1153,6 +1200,7 @@ async def rename_invoice_file(
     gdrive_file_id: str,
     vendor: str = Form(...),  # Required vendor name
     invoice_date: str = Form(...),  # Required date (YYYY-MM-DD)
+    payment_type: str = Form(None),  # Optional: override payment type (card, wire, sepa-debit, cash)
     db: Session = Depends(get_db)
 ):
     """Rename an existing invoice in Google Drive.
@@ -1186,13 +1234,15 @@ async def rename_invoice_file(
     # Generate new filename
     vendor_slug = slugify_vendor(final_vendor)
 
-    # Determine payment type from existing filename or transaction
-    payment_type = "unknown"
-    if payment.filename:
+    # Determine payment type: use provided value, or extract from existing filename
+    final_payment_type = payment_type  # Use provided value if given
+    if not final_payment_type and payment.filename:
         # Try to extract payment type from existing filename
         parts = payment.filename.split("_")
         if len(parts) >= 2:
-            payment_type = parts[1]
+            final_payment_type = parts[1]
+    if not final_payment_type:
+        final_payment_type = "unknown"
 
     # Get sequence number from existing filename or use 001
     sequence_num = 1
@@ -1218,7 +1268,7 @@ async def rename_invoice_file(
             except Exception:
                 pass
 
-    new_filename = f"{final_date}-{sequence_num:03d}_{payment_type}_{vendor_slug}.pdf" if final_date else payment.filename
+    new_filename = f"{final_date}-{sequence_num:03d}_{final_payment_type}_{vendor_slug}.pdf" if final_date else payment.filename
 
     # Rename file in Google Drive if filename changed
     renamed = False

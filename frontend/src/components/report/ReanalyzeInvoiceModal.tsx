@@ -11,14 +11,23 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select } from "@/components/ui/select"
 import type { FolderInvoice } from "@/api/client"
 import { useParseCachedInvoice } from "@/api/client"
+
+const PAYMENT_TYPES = [
+  { value: "card", label: "Card" },
+  { value: "wire", label: "Wire Transfer" },
+  { value: "sepa-debit", label: "SEPA Direct Debit" },
+  { value: "cash", label: "Cash" },
+  { value: "credit-note", label: "Credit Note" },
+]
 
 interface ReanalyzeInvoiceModalProps {
   invoice: FolderInvoice | null
   open: boolean
   onOpenChange: (open: boolean) => void
-  onReanalyze: (fileId: string, vendor?: string, invoiceDate?: string) => Promise<void>
+  onReanalyze: (fileId: string, vendor?: string, invoiceDate?: string, paymentType?: string) => Promise<void>
   isLoading?: boolean
 }
 
@@ -31,6 +40,7 @@ export function ReanalyzeInvoiceModal({
 }: ReanalyzeInvoiceModalProps) {
   const [vendor, setVendor] = React.useState("")
   const [invoiceDate, setInvoiceDate] = React.useState("")
+  const [paymentType, setPaymentType] = React.useState("card")
   const [amount, setAmount] = React.useState<string | null>(null)
   const [isParsed, setIsParsed] = React.useState(false)
   const parseCached = useParseCachedInvoice()
@@ -44,6 +54,12 @@ export function ReanalyzeInvoiceModal({
       // Try to extract date from filename (YYYY-MM-DD-NNN_...)
       const dateMatch = invoice.filename.match(/^(\d{4}-\d{2}-\d{2})/)
       setInvoiceDate(dateMatch ? dateMatch[1] : "")
+      // Extract payment type from filename
+      const parts = invoice.filename.split("_")
+      const extractedType = parts.length >= 2 ? parts[1] : "card"
+      // Validate it's a known type
+      const knownType = PAYMENT_TYPES.find(t => t.value === extractedType)
+      setPaymentType(knownType ? extractedType : "card")
       setIsParsed(false)
     }
   }, [open, invoice])
@@ -65,7 +81,7 @@ export function ReanalyzeInvoiceModal({
 
   const handleConfirm = async () => {
     if (invoice) {
-      await onReanalyze(invoice.gdrive_file_id, vendor || undefined, invoiceDate || undefined)
+      await onReanalyze(invoice.gdrive_file_id, vendor || undefined, invoiceDate || undefined, paymentType)
     }
   }
 
@@ -79,9 +95,6 @@ export function ReanalyzeInvoiceModal({
     .replace(/-+/g, '-')        // Collapse multiple hyphens
     .replace(/^-|-$/g, '')      // Strip leading/trailing hyphens
     .slice(0, 20)
-  // Extract payment type from current filename
-  const parts = invoice.filename.split("_")
-  const paymentType = parts.length >= 2 ? parts[1] : "unknown"
   const previewFilename = invoiceDate && vendorSlug
     ? `${invoiceDate}-001_${paymentType}_${vendorSlug}.pdf`
     : invoice.filename
@@ -161,11 +174,25 @@ export function ReanalyzeInvoiceModal({
             </div>
 
             <div className="grid grid-cols-4 items-center gap-2">
+              <Label htmlFor="paymentType" className="text-right">
+                Type:
+              </Label>
+              <div className="col-span-3">
+                <Select
+                  id="paymentType"
+                  value={paymentType}
+                  onChange={(e) => setPaymentType(e.target.value)}
+                  options={PAYMENT_TYPES}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 items-center gap-2">
               <Label className="text-right text-muted-foreground">
                 Amount:
               </Label>
               <span className="col-span-3 font-mono">
-                {amount ? `€${amount}` : (invoice.amount ? `€${invoice.amount}` : "-")}
+                {amount ? `${amount}` : (invoice.amount ? `${invoice.amount}` : "-")}
               </span>
             </div>
           </div>

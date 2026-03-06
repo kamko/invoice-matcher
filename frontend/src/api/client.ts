@@ -641,14 +641,16 @@ export interface RenameInvoiceResponse {
 export function useRenameInvoiceFile() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ fileId, vendor, invoiceDate }: {
+    mutationFn: async ({ fileId, vendor, invoiceDate, paymentType }: {
       fileId: string
       vendor: string
       invoiceDate: string
+      paymentType?: string
     }): Promise<RenameInvoiceResponse> => {
       const formData = new FormData()
       formData.append('vendor', vendor)
       formData.append('invoice_date', invoiceDate)
+      if (paymentType) formData.append('payment_type', paymentType)
 
       const response = await fetch(`${API_BASE}/invoices/${fileId}/rename`, {
         method: 'POST',

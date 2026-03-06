@@ -302,16 +302,19 @@ class ReconcileService:
             regular_invoices = [inv for inv in invoices if not inv.is_credit_note]
 
             # Run matcher on unknown transactions vs regular invoices
+            # Two-pass: same-month first, then previous-month as last resort
             matcher = Matcher()
             matched, unmatched_trans, unmatched_regular_inv = matcher.match_all(
                 unknown_transactions,
-                regular_invoices
+                regular_invoices,
+                year_month=month.year_month
             )
 
             # Match credit-note invoices with income transactions
             credit_matched, unmatched_income, unmatched_credit_inv = matcher.match_all(
                 income_transactions,
-                credit_note_invoices
+                credit_note_invoices,
+                year_month=month.year_month
             )
 
             # Combine results

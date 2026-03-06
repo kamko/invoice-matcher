@@ -281,8 +281,13 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
               refetch()
             }}
             isRenaming={renameInvoice.isPending}
-            onReanalyze={async (fileId, vendor, invoiceDate) => {
-              await renameInvoiceFile.mutateAsync({ fileId, vendor, invoiceDate })
+            onReanalyze={async (fileId, vendor, invoiceDate, paymentType) => {
+              await renameInvoiceFile.mutateAsync({
+                fileId,
+                vendor: vendor || "",
+                invoiceDate: invoiceDate || "",
+                paymentType
+              })
               refetch()
             }}
             isReanalyzing={renameInvoiceFile.isPending}

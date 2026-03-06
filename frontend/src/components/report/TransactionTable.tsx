@@ -27,6 +27,7 @@ export function MatchedTable({ matches }: MatchedTableProps) {
           <TableHead>Date</TableHead>
           <TableHead>Amount</TableHead>
           <TableHead>Counter Party</TableHead>
+          <TableHead>Vendor</TableHead>
           <TableHead>Invoice</TableHead>
           <TableHead>Confidence</TableHead>
           <TableHead>Status</TableHead>
@@ -35,7 +36,7 @@ export function MatchedTable({ matches }: MatchedTableProps) {
       <TableBody>
         {matches.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={6} className="text-center text-muted-foreground">
+            <TableCell colSpan={7} className="text-center text-muted-foreground">
               No matched transactions
             </TableCell>
           </TableRow>
@@ -48,6 +49,9 @@ export function MatchedTable({ matches }: MatchedTableProps) {
               </TableCell>
               <TableCell className="max-w-[200px] truncate">
                 {match.transaction.counter_name || match.transaction.counter_account}
+              </TableCell>
+              <TableCell className="max-w-[150px] truncate" title={match.invoice?.vendor || ""}>
+                {match.invoice?.vendor || "-"}
               </TableCell>
               <TableCell className="max-w-[200px] truncate">
                 {match.invoice?.gdrive_file_id ? (
@@ -396,7 +400,7 @@ interface FolderInvoicesTableProps {
   formatYearMonth: (ym: string) => string
   onRename?: (fileId: string, newFilename: string) => Promise<void>
   isRenaming?: boolean
-  onReanalyze?: (fileId: string, vendor?: string, invoiceDate?: string) => Promise<void>
+  onReanalyze?: (fileId: string, vendor?: string, invoiceDate?: string, paymentType?: string) => Promise<void>
   isReanalyzing?: boolean
 }
 
@@ -456,9 +460,9 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
     }
   }
 
-  const handleReanalyze = async (fileId: string, vendor?: string, invoiceDate?: string) => {
+  const handleReanalyze = async (fileId: string, vendor?: string, invoiceDate?: string, paymentType?: string) => {
     if (onReanalyze) {
-      await onReanalyze(fileId, vendor, invoiceDate)
+      await onReanalyze(fileId, vendor, invoiceDate, paymentType)
       setReanalyzeInvoice(null)
     }
   }

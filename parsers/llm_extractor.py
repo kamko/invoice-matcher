@@ -534,12 +534,13 @@ INVOICE:
 - Type: {inv_type}
 - VS: {inv_vs or '(none)'}
 
-IMPORTANT:
-- Invoice filename format: YYYY-MM-DD-NNN_type_vendor.pdf - the vendor name in filename is RELIABLE
+MATCHING RULES:
+- Amounts matching (ignoring sign) is the STRONGEST indicator - transaction is negative (expense), invoice is positive
+- Same or nearby date (within a few days) is a strong signal
+- Related companies are the SAME vendor: Alza.cz = Alza SK, Orlen CZ = Orlen SK, etc.
+- Vendor name in filename may be abbreviated/slugified - match the actual company, not exact text
 - For wire transfers, counter name often shows intermediary bank, NOT the actual vendor
-- Exact amount match + same date = very strong match signal
-- Transaction amount is negative (expense), invoice amount is positive
-- Amounts matching (ignoring sign) is the strongest indicator
+- Card transactions: vendor is usually in the Note field ("Nakup: Company Name...")
 
 Score 0-100 (just the number):"""
 
@@ -610,16 +611,21 @@ def extract_all_receipts_from_image(pdf_path: Path, model: str = None) -> List[I
         api_key=api_key,
     )
 
-    prompt = f"""Extract ALL receipts/invoices from these images ({len(images_base64)} page(s)).
+    prompt = f"""Extract ONLY actual invoices from these images ({len(images_base64)} page(s)).
 
-Return a JSON array. For EACH receipt found, extract:
-- amount: The TOTAL amount INCLUDING VAT/tax (gross total, NOT net/base). Look for "Celkom vrátane DPH", "Total with VAT". Just the number.
-- vendor: Name of the company/store.
+Return a JSON array. For EACH INVOICE found, extract:
+- amount: The TOTAL amount INCLUDING VAT/tax (gross total). Look for "Celkom vrátane DPH", "Total with VAT". Just the number.
+- vendor: Name of the company/store issuing the invoice.
 
-IMPORTANT: If multiple receipts exist, return ALL as separate objects.
-IMPORTANT: Always use WITH-VAT amounts, not without-VAT amounts.
+CRITICAL RULES:
+- Only extract ACTUAL INVOICES with invoice numbers, dates, and totals
+- IGNORE summary pages, monthly statements, account overviews, delivery notes
+- IGNORE pages that just list multiple transactions or totals without being a proper invoice
+- If a PDF has 1 invoice + 2 summary pages, return ONLY the 1 invoice
+- Each invoice should have a clear total amount payable
 
 Return ONLY valid JSON array: [{{"amount": 12.50, "vendor": "Store"}}]
+Return empty array [] if no actual invoices found.
 
 JSON response:"""
 
