@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Link } from "wouter"
 import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useRenameInvoiceFile, useSkipTransaction, useManualMatch, type Transaction } from "@/api/client"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useRenameInvoiceFile, useSkipTransaction, useManualMatch, useApproveMatch, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
@@ -35,6 +35,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const renameInvoiceFile = useRenameInvoiceFile()
   const skipTransaction = useSkipTransaction()
   const manualMatch = useManualMatch()
+  const approveMatch = useApproveMatch()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
@@ -127,6 +128,14 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
       invoiceFileId,
     })
     setManualMatchTransaction(null)
+    refetch()
+  }
+
+  const handleApproveMatch = async (transactionId: string) => {
+    await approveMatch.mutateAsync({
+      yearMonth,
+      transactionId,
+    })
     refetch()
   }
 
@@ -253,7 +262,11 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
         </TabsContent>
 
         <TabsContent value="matched" className="border rounded-lg">
-          <MatchedTable matches={month.matched || []} />
+          <MatchedTable
+            matches={month.matched || []}
+            onApprove={handleApproveMatch}
+            isApproving={approveMatch.isPending}
+          />
         </TabsContent>
 
         <TabsContent value="known" className="border rounded-lg">

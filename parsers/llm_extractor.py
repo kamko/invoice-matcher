@@ -477,6 +477,27 @@ Your answer:"""
         return -1, 0.0
 
 
+def get_vendor_aliases() -> list:
+    """Get all vendor aliases from the database for LLM context."""
+    try:
+        from web.database import SessionLocal
+        from web.database.models import VendorAlias
+
+        db = SessionLocal()
+        aliases = db.query(VendorAlias).order_by(
+            VendorAlias.confidence_count.desc()
+        ).limit(50).all()
+
+        result = []
+        for a in aliases:
+            result.append(f"{a.transaction_vendor} = {a.invoice_vendor}")
+
+        db.close()
+        return result
+    except Exception:
+        return []
+
+
 def score_transaction_invoice_match(
     trans_date: str,
     trans_amount: str,
@@ -515,6 +536,12 @@ def score_transaction_invoice_match(
         api_key=api_key,
     )
 
+    # Get learned vendor aliases
+    aliases = get_vendor_aliases()
+    aliases_text = ""
+    if aliases:
+        aliases_text = "\n\nKNOWN VENDOR ALIASES (same company, different names):\n" + "\n".join(f"- {a}" for a in aliases[:20])
+
     prompt = f"""Match this bank transaction to this invoice. Give confidence score 0-100.
 
 TRANSACTION:
@@ -533,10 +560,12 @@ INVOICE:
 - Vendor: {inv_vendor}
 - Type: {inv_type}
 - VS: {inv_vs or '(none)'}
+{aliases_text}
 
 MATCHING RULES:
 - Amounts matching (ignoring sign) is the STRONGEST indicator - transaction is negative (expense), invoice is positive
 - Same or nearby date (within a few days) is a strong signal
+- If vendors appear in KNOWN VENDOR ALIASES list above, they are DEFINITELY the same company (100% match on vendor)
 - Related companies are the SAME vendor: Alza.cz = Alza SK, Orlen CZ = Orlen SK, etc.
 - Vendor name in filename may be abbreviated/slugified - match the actual company, not exact text
 - For wire transfers, counter name often shows intermediary bank, NOT the actual vendor

@@ -17,9 +17,13 @@ import { ReanalyzeInvoiceModal } from "./ReanalyzeInvoiceModal"
 
 interface MatchedTableProps {
   matches: MatchResult[]
+  onApprove?: (transactionId: string) => void
+  isApproving?: boolean
 }
 
-export function MatchedTable({ matches }: MatchedTableProps) {
+export function MatchedTable({ matches, onApprove, isApproving }: MatchedTableProps) {
+  const hasReviewItems = matches.some(m => m.status === "REVIEW")
+
   return (
     <Table>
       <TableHeader>
@@ -31,12 +35,13 @@ export function MatchedTable({ matches }: MatchedTableProps) {
           <TableHead>Invoice</TableHead>
           <TableHead>Confidence</TableHead>
           <TableHead>Status</TableHead>
+          {hasReviewItems && onApprove && <TableHead>Actions</TableHead>}
         </TableRow>
       </TableHeader>
       <TableBody>
         {matches.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={7} className="text-center text-muted-foreground">
+            <TableCell colSpan={hasReviewItems && onApprove ? 8 : 7} className="text-center text-muted-foreground">
               No matched transactions
             </TableCell>
           </TableRow>
@@ -84,6 +89,21 @@ export function MatchedTable({ matches }: MatchedTableProps) {
                   {match.status}
                 </Badge>
               </TableCell>
+              {hasReviewItems && onApprove && (
+                <TableCell>
+                  {match.status === "REVIEW" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onApprove(match.transaction.id)}
+                      disabled={isApproving}
+                    >
+                      <Check className="h-4 w-4 mr-1" />
+                      Approve
+                    </Button>
+                  )}
+                </TableCell>
+              )}
             </TableRow>
           ))
         )}

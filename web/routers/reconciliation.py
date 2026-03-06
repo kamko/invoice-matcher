@@ -23,7 +23,7 @@ from web.schemas.reconciliation import (
     SetFolderRequest,
 )
 from parsers.pdf_parser import parse_uploaded_pdf
-from web.database.models import MonthlyReconciliation, InvoicePayment, AppSettings
+from web.database.models import MonthlyReconciliation, InvoicePayment, AppSettings, VendorAlias
 from web.schemas.known_transaction import KnownTransactionCreate
 from web.services.reconcile_service import ReconcileService
 from web.services.known_trans_service import KnownTransactionService
@@ -31,6 +31,73 @@ from web.routers.gdrive import _gdrive_service  # Use the authenticated instance
 from web.config import DATA_DIR
 
 router = APIRouter(prefix="/api", tags=["reconciliation"])
+
+
+def extract_vendor_from_transaction(transaction_data: dict) -> str:
+    """Extract vendor name from transaction data.
+
+    Tries counter_name first, then extracts from note field.
+    """
+    # Try counter_name first
+    counter_name = transaction_data.get("counter_name", "").strip()
+    if counter_name and len(counter_name) > 2:
+        return counter_name
+
+    # Try to extract from note (e.g., "Nákup: Alza.cz a.s., Prague, CZ...")
+    note = transaction_data.get("note", "")
+    if note:
+        import re
+        # Common patterns for card transactions
+        match = re.search(r'[Nn][aá]kup:\s*([^,]+)', note)
+        if match:
+            return match.group(1).strip()
+        # SEPA transactions often have vendor in the first part
+        if ',' in note:
+            return note.split(',')[0].strip()
+
+    return ""
+
+
+def store_vendor_alias(
+    db: Session,
+    transaction_vendor: str,
+    invoice_vendor: str,
+    source: str
+) -> None:
+    """Store or update a vendor alias mapping."""
+    from datetime import datetime
+
+    if not transaction_vendor or not invoice_vendor:
+        return
+
+    # Normalize vendors for comparison
+    trans_lower = transaction_vendor.lower().strip()
+    inv_lower = invoice_vendor.lower().strip()
+
+    # Don't store if they're essentially the same
+    if trans_lower == inv_lower:
+        return
+    if trans_lower in inv_lower or inv_lower in trans_lower:
+        return
+
+    # Check if this mapping already exists
+    existing = db.query(VendorAlias).filter(
+        VendorAlias.transaction_vendor == trans_lower,
+        VendorAlias.invoice_vendor == inv_lower
+    ).first()
+
+    if existing:
+        # Update confidence count
+        existing.confidence_count += 1
+        existing.last_confirmed_at = datetime.utcnow()
+    else:
+        # Create new alias
+        alias = VendorAlias(
+            transaction_vendor=trans_lower,
+            invoice_vendor=inv_lower,
+            source=source
+        )
+        db.add(alias)
 
 
 def slugify_vendor(vendor: str, max_len: int = 20) -> str:
@@ -832,11 +899,76 @@ def manual_match(
     else:
         invoice_payment.transaction_id = transaction_id
 
+    # Store vendor alias for LLM knowledge base
+    trans_vendor = extract_vendor_from_transaction(transaction_data)
+    if trans_vendor and invoice_payment.vendor:
+        store_vendor_alias(db, trans_vendor, invoice_payment.vendor, "manual_match")
+
     db.commit()
 
     return {
         "success": True,
         "message": f"Transaction manually matched with {invoice_payment.filename}"
+    }
+
+
+@router.post("/months/{year_month}/approve-match")
+def approve_match(
+    year_month: str,
+    transaction_id: str = Form(...),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Approve a REVIEW match, changing its status to OK and learning the vendor mapping."""
+    reconcile_service = ReconcileService(db)
+
+    month = reconcile_service.get_month(year_month)
+    if not month:
+        raise HTTPException(status_code=404, detail="Month not found")
+
+    if not month.results_json:
+        raise HTTPException(status_code=400, detail="No results to modify")
+
+    results = month.results_json.copy()
+    matched = results.get("matched", [])
+
+    # Find the match with this transaction ID and REVIEW status
+    match_data = None
+    match_index = None
+    for i, m in enumerate(matched):
+        trans = m.get("transaction", {})
+        if trans.get("id") == transaction_id and m.get("status") == "REVIEW":
+            match_data = m
+            match_index = i
+            break
+
+    if not match_data:
+        raise HTTPException(status_code=404, detail="Review match not found")
+
+    # Update status to OK
+    matched[match_index]["status"] = "OK"
+
+    # Store vendor alias for LLM knowledge base
+    transaction_data = match_data.get("transaction", {})
+    invoice_data = match_data.get("invoice", {})
+    trans_vendor = extract_vendor_from_transaction(transaction_data)
+    inv_vendor = invoice_data.get("vendor", "")
+
+    if trans_vendor and inv_vendor:
+        store_vendor_alias(db, trans_vendor, inv_vendor, "review_approved")
+
+    # Update results
+    results["matched"] = matched
+    month.results_json = results
+    month.matched_count = len([m for m in matched if m.get("status") == "OK"])
+    month.review_count = len([m for m in matched if m.get("status") == "REVIEW"])
+    flag_modified(month, "results_json")
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Match approved",
+        "vendor_alias_stored": bool(trans_vendor and inv_vendor)
     }
 
 

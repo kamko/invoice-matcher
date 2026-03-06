@@ -434,6 +434,35 @@ export function useManualMatch() {
   })
 }
 
+// Approve a REVIEW match (changes status to OK and stores vendor alias)
+export function useApproveMatch() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ yearMonth, transactionId }: {
+      yearMonth: string
+      transactionId: string
+    }) => {
+      const formData = new FormData()
+      formData.append('transaction_id', transactionId)
+
+      const response = await fetch(`/api/months/${yearMonth}/approve-match`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
+    },
+  })
+}
+
 // Parse PDF preview (extract data without uploading)
 export interface ParsePdfResponse {
   success: boolean

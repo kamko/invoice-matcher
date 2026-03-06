@@ -150,6 +150,30 @@ class InvoicePayment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class VendorAlias(Base):
+    """Learned vendor name mappings from approved matches.
+
+    When a REVIEW match is approved or a manual match is made,
+    store the mapping so future matches can use this knowledge.
+    """
+
+    __tablename__ = "vendor_aliases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Vendor name from transaction (counter_name or extracted from note)
+    transaction_vendor = Column(String(255), nullable=False, index=True)
+    # Vendor name from invoice (from filename/PDF)
+    invoice_vendor = Column(String(255), nullable=False, index=True)
+    # How this alias was learned
+    source = Column(String(50), nullable=False)  # 'review_approved', 'manual_match'
+    # Number of times this mapping has been confirmed
+    confidence_count = Column(Integer, default=1, nullable=False)
+    # When this was first learned
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Last time this mapping was confirmed
+    last_confirmed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class PDFCache(Base):
     """Cache for PDF files downloaded from Google Drive.
 
