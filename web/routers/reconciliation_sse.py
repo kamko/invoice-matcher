@@ -571,9 +571,38 @@ async def fio_refresh_stream(
 
             await asyncio.sleep(0.1)
 
-            # Step 3: Check known transactions
-            yield send_event("progress", {"step": "checking_known", "message": "Checking known transaction rules..."})
+            # Step 3: Find already-matched transactions (preserve existing matches)
+            yield send_event("progress", {"step": "checking_known", "message": "Checking existing matches and known rules..."})
             await asyncio.sleep(0.1)
+
+            # Get transaction IDs that are already matched in InvoicePayment
+            already_matched_trans_ids = set()
+            existing_matches_data = []  # Store match data for already-matched transactions
+            paid_invoices = db.query(InvoicePayment).filter(
+                InvoicePayment.paid_month == year_month,
+                InvoicePayment.transaction_id.isnot(None)
+            ).all()
+            for p in paid_invoices:
+                if p.transaction_id and p.transaction_id != "CASH":
+                    already_matched_trans_ids.add(str(p.transaction_id))
+                    # Find the transaction data
+                    for t in transactions:
+                        if str(t.id) == str(p.transaction_id):
+                            existing_matches_data.append({
+                                "transaction": serialize_transaction(t),
+                                "invoice": {
+                                    "filename": p.filename,
+                                    "gdrive_file_id": p.gdrive_file_id,
+                                    "amount": str(p.amount) if p.amount else None,
+                                    "vendor": p.vendor,
+                                    "payment_type": p.payment_type,
+                                },
+                                "confidence": 1.0,
+                                "confidence_pct": 100,
+                                "status": "OK",
+                                "strategy_scores": {"PreviousMatch": 1.0},
+                            })
+                            break
 
             known_service = KnownTransactionService(db)
             known_transactions = []
@@ -583,6 +612,9 @@ async def fio_refresh_stream(
             skipped_transactions = []
 
             for trans in transactions:
+                # Skip already-matched transactions
+                if str(trans.id) in already_matched_trans_ids:
+                    continue
                 if trans.is_fee:
                     fee_transactions.append(trans)
                     continue
@@ -622,22 +654,27 @@ async def fio_refresh_stream(
 
             await asyncio.sleep(0.1)
 
-            # Step 5: Save results (same as full sync)
+            # Step 5: Save results - MERGE with existing matches for already-paid invoices
             yield send_event("progress", {"step": "saving", "message": "Saving results..."})
 
-            # Serialize results
+            # Serialize new matches
+            new_matched = [
+                {
+                    "transaction": serialize_transaction(m.transaction),
+                    "invoice": serialize_invoice(m.invoice) if m.invoice else None,
+                    "confidence": m.confidence,
+                    "confidence_pct": m.confidence_pct,
+                    "status": m.status,
+                    "strategy_scores": m.strategy_scores,
+                }
+                for m in matched
+            ]
+
+            # Merge: existing matches (from InvoicePayment) + new matches
+            all_matched = existing_matches_data + new_matched
+
             results = {
-                "matched": [
-                    {
-                        "transaction": serialize_transaction(m.transaction),
-                        "invoice": serialize_invoice(m.invoice) if m.invoice else None,
-                        "confidence": m.confidence,
-                        "confidence_pct": m.confidence_pct,
-                        "status": m.status,
-                        "strategy_scores": m.strategy_scores,
-                    }
-                    for m in matched
-                ],
+                "matched": all_matched,
                 "unmatched": [serialize_transaction(t) for t in unmatched_trans],
                 "unmatched_invoices": [serialize_invoice(inv) for inv in unmatched_inv],
                 "known": [
@@ -669,8 +706,9 @@ async def fio_refresh_stream(
 
             # Update month record
             month.results_json = results
-            month.matched_count = len([m for m in matched if m.status == "OK"])
-            month.review_count = len([m for m in matched if m.status == "REVIEW"])
+            # Count all matched (existing + new)
+            month.matched_count = len([m for m in all_matched if m.get("status") == "OK"])
+            month.review_count = len([m for m in all_matched if m.get("status") == "REVIEW"])
             month.unmatched_count = len(unmatched_trans)
             month.known_count = len(known_transactions)
             month.fee_count = len(fee_transactions)
