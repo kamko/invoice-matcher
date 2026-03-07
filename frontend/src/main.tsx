@@ -3,8 +3,6 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import App from './App'
-import { SyncProvider } from './context/SyncContext'
-import { LocalModeProvider } from './context/LocalModeContext'
 import './index.css'
 
 // Global mutation error handler - shows toast for all mutation errors
@@ -28,11 +26,7 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <LocalModeProvider>
-        <SyncProvider>
-          <App />
-        </SyncProvider>
-      </LocalModeProvider>
+      <App />
     </QueryClientProvider>
   </React.StrictMode>,
 )

@@ -33,7 +33,7 @@ class GDriveService:
         self._credentials: Optional[Credentials] = None
         self._download_dir = DATA_DIR / "downloads"
         self._download_dir.mkdir(exist_ok=True)
-        # Store the flow to preserve code_verifier for PKCE
+        # Store the flow object to preserve PKCE code_verifier between auth_url and callback
         self._pending_flow: Optional[Flow] = None
 
     @property
@@ -63,7 +63,7 @@ class GDriveService:
         if not GDRIVE_AVAILABLE:
             raise RuntimeError("Google Drive libraries not installed")
 
-        # Create and store the flow for later use in callback
+        # Create and store the flow - it contains PKCE code_verifier internally
         self._pending_flow = self._create_flow()
 
         auth_url, _ = self._pending_flow.authorization_url(
@@ -79,12 +79,11 @@ class GDriveService:
         if not GDRIVE_AVAILABLE:
             raise RuntimeError("Google Drive libraries not installed")
 
-        # Use the stored flow that has the code_verifier
         if self._pending_flow is None:
-            # Fallback: create new flow (may fail with PKCE error)
-            self._pending_flow = self._create_flow()
+            raise RuntimeError("No pending OAuth flow - please start authentication again")
 
         try:
+            # Use the stored flow which has the PKCE code_verifier
             self._pending_flow.fetch_token(code=code)
             self._credentials = self._pending_flow.credentials
         except Exception as e:
@@ -94,9 +93,9 @@ class GDriveService:
                 self._pending_flow = None
                 raise RuntimeError("Please re-authenticate with Google Drive (scopes changed)")
             raise
-
-        # Clear the pending flow
-        self._pending_flow = None
+        finally:
+            # Clear the pending flow after use
+            self._pending_flow = None
 
         return self._credentials
 

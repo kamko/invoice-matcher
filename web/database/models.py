@@ -1,10 +1,10 @@
-"""SQLAlchemy ORM models."""
+"""SQLAlchemy ORM models - simplified flat data model."""
 
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import (
     Column, Integer, String, Numeric, Boolean, DateTime,
-    ForeignKey, Text, JSON, LargeBinary
+    ForeignKey, Text, JSON, LargeBinary, Date, UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -21,13 +21,60 @@ class AppSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Invoice(Base):
+    """Invoices uploaded from GDrive or manually."""
+
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gdrive_file_id = Column(String(255), nullable=True, index=True)  # NULL for manual uploads
+    receipt_index = Column(Integer, default=0)  # For multi-receipt PDFs
+    filename = Column(String(255), nullable=False)
+    vendor = Column(String(255), nullable=True)
+    amount = Column(Numeric(12, 2), nullable=True)
+    invoice_date = Column(Date, nullable=True)  # Determines "invoice month" for VAT
+    payment_type = Column(String(20), nullable=True)  # wire/card/cash
+    vs = Column(String(50), nullable=True)  # Variable symbol (for wire)
+    iban = Column(String(50), nullable=True)  # IBAN (for wire)
+    is_credit_note = Column(Boolean, default=False)
+    status = Column(String(20), default='unmatched')  # unmatched/matched/cash/exported
+    transaction_id = Column(String(100), nullable=True, index=True)  # FK to matched transaction
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('gdrive_file_id', 'receipt_index', name='uq_invoice_gdrive_receipt'),
+        UniqueConstraint('transaction_id', name='uq_invoice_transaction'),  # 1:1 enforcement
+    )
+
+
+class Transaction(Base):
+    """Transactions fetched from Fio Bank."""
+
+    __tablename__ = "transactions"
+
+    id = Column(String(100), primary_key=True)  # Fio transaction ID
+    date = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String(3), default='CZK')
+    counter_account = Column(String(100), nullable=True)
+    counter_name = Column(String(255), nullable=True)
+    vs = Column(String(50), nullable=True)  # Variable symbol
+    note = Column(Text, nullable=True)
+    type = Column(String(20), nullable=True)  # expense/income/fee
+    raw_type = Column(String(100), nullable=True)  # Original type from Fio
+    status = Column(String(20), default='unmatched')  # unmatched/matched/known/skipped
+    known_rule_id = Column(Integer, ForeignKey("known_transactions.id"), nullable=True)
+    skip_reason = Column(String(255), nullable=True)  # If manually skipped
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
 class KnownTransaction(Base):
-    """Known transaction rules for automatic matching."""
+    """Known transaction rules for automatic matching (fees, recurring, etc.)."""
 
     __tablename__ = "known_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
-    rule_type = Column(String(20), nullable=False)  # 'exact', 'pattern', 'vendor'
+    rule_type = Column(String(20), nullable=False)  # 'exact', 'pattern', 'vendor', 'note', 'account'
     vendor_pattern = Column(String(255), nullable=True)  # Regex pattern for vendor/counter_name
     note_pattern = Column(String(255), nullable=True)  # Regex pattern for note field
     amount = Column(Numeric(12, 2), nullable=True)  # Exact match
@@ -40,132 +87,9 @@ class KnownTransaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationship to matches
-    matches = relationship("KnownTransactionMatch", back_populates="rule")
-
-
-class KnownTransactionMatch(Base):
-    """Audit trail linking transactions to known transaction rules."""
-
-    __tablename__ = "known_transaction_matches"
-
-    id = Column(Integer, primary_key=True, index=True)
-    rule_id = Column(Integer, ForeignKey("known_transactions.id"), nullable=False)
-    transaction_id = Column(String(100), nullable=False)  # Bank transaction ID
-    session_id = Column(Integer, ForeignKey("reconciliation_sessions.id"), nullable=True)
-    matched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    transaction_data = Column(JSON, nullable=True)  # Store transaction details
-
-    # Relationships
-    rule = relationship("KnownTransaction", back_populates="matches")
-    session = relationship("ReconciliationSession", back_populates="known_matches")
-
-
-class ReconciliationSession(Base):
-    """Session state for reconciliation runs - kept for migration compatibility."""
-
-    __tablename__ = "reconciliation_sessions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    from_date = Column(DateTime, nullable=False)
-    to_date = Column(DateTime, nullable=False)
-    gdrive_folder_id = Column(String(255), nullable=True)
-    status = Column(String(20), default="pending")  # pending, processing, completed, failed
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
-
-    # Results cache
-    results_json = Column(JSON, nullable=True)
-    matched_count = Column(Integer, default=0)
-    unmatched_count = Column(Integer, default=0)
-    review_count = Column(Integer, default=0)
-    known_count = Column(Integer, default=0)
-    error_message = Column(Text, nullable=True)
-
-    # Relationships
-    known_matches = relationship("KnownTransactionMatch", back_populates="session")
-
-
-class MonthlyReconciliation(Base):
-    """Monthly reconciliation data - organized by year-month."""
-
-    __tablename__ = "monthly_reconciliations"
-
-    id = Column(Integer, primary_key=True, index=True)
-    year_month = Column(String(7), unique=True, nullable=False, index=True)  # "2026-02"
-    gdrive_folder_id = Column(String(255), nullable=True)
-    gdrive_folder_name = Column(String(255), nullable=True)
-    fio_token_hash = Column(String(64), nullable=True)  # Store hash for validation
-    status = Column(String(20), default="pending")  # pending, processing, completed, failed
-    last_synced_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    # Transactions cache (for past months - avoids Fio API calls)
-    transactions_json = Column(JSON, nullable=True)
-
-    # Results cache
-    results_json = Column(JSON, nullable=True)
-    matched_count = Column(Integer, default=0)
-    unmatched_count = Column(Integer, default=0)
-    review_count = Column(Integer, default=0)
-    known_count = Column(Integer, default=0)
-    fee_count = Column(Integer, default=0)
-    income_count = Column(Integer, default=0)
-    error_message = Column(Text, nullable=True)
-
-
-class InvoicePayment(Base):
-    """Tracks when invoices are paid, enabling cross-month payment tracking.
-
-    An invoice stored in month A's folder might be paid in month B.
-    This table records that relationship.
-
-    For multi-receipt PDFs, multiple records exist for the same gdrive_file_id,
-    distinguished by receipt_index.
-    """
-
-    __tablename__ = "invoice_payments"
-
-    id = Column(Integer, primary_key=True, index=True)
-    # The folder/month where the invoice is stored (for VAT)
-    invoice_month = Column(String(7), nullable=False, index=True)  # "2026-02"
-    # Google Drive file ID of the invoice
-    gdrive_file_id = Column(String(255), nullable=False, index=True)
-    # Invoice filename for display
-    filename = Column(String(255), nullable=False)
-    # Receipt index within the PDF (0 for single-receipt, 0/1/2... for multi-receipt)
-    receipt_index = Column(Integer, nullable=False, default=0)
-    # The month when payment was made (may differ from invoice_month)
-    paid_month = Column(String(7), nullable=True, index=True)  # "2026-03" or None if unpaid
-    # Transaction ID that paid this invoice
-    transaction_id = Column(String(100), nullable=True)
-    # Payment amount
-    amount = Column(Numeric(12, 2), nullable=True)
-    # Invoice vendor
-    vendor = Column(String(255), nullable=True)
-    # Payment type (card, wire, etc.) - may differ from filename if IBAN/VS detected
-    payment_type = Column(String(50), nullable=True)
-    # Variable symbol for wire transfers
-    variable_symbol = Column(String(50), nullable=True)
-    # IBAN for wire transfers
-    iban = Column(String(50), nullable=True)
-    # Invoice date
-    invoice_date = Column(DateTime, nullable=True)
-    # Flag for manually uploaded invoices (protected from sync override)
-    is_manual_upload = Column(Boolean, default=False, nullable=False)
-    # Flag for manually approved matches (REVIEW -> OK, preserved during resync)
-    is_approved = Column(Boolean, default=False, nullable=False)
-    # When this record was created/updated
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
 
 class VendorAlias(Base):
-    """Learned vendor name mappings from approved matches.
-
-    When a REVIEW match is approved or a manual match is made,
-    store the mapping so future matches can use this knowledge.
-    """
+    """Learned vendor name mappings from approved matches."""
 
     __tablename__ = "vendor_aliases"
 
@@ -175,7 +99,7 @@ class VendorAlias(Base):
     # Vendor name from invoice (from filename/PDF)
     invoice_vendor = Column(String(255), nullable=False, index=True)
     # How this alias was learned
-    source = Column(String(50), nullable=False)  # 'review_approved', 'manual_match'
+    source = Column(String(50), nullable=False)  # 'manual_match', 'auto_match'
     # Number of times this mapping has been confirmed
     confidence_count = Column(Integer, default=1, nullable=False)
     # When this was first learned
@@ -185,25 +109,15 @@ class VendorAlias(Base):
 
 
 class PDFCache(Base):
-    """Cache for PDF files downloaded from Google Drive.
-
-    Stores PDFs as blobs to avoid repeated downloads from GDrive.
-    """
+    """Cache for PDF files downloaded from Google Drive."""
 
     __tablename__ = "pdf_cache"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Google Drive file ID - unique identifier
     gdrive_file_id = Column(String(255), unique=True, nullable=False, index=True)
-    # Original filename
     filename = Column(String(255), nullable=False)
-    # PDF content as binary blob
     content = Column(LargeBinary, nullable=False)
-    # File size in bytes
     file_size = Column(Integer, nullable=False)
-    # MD5 checksum from Google Drive for cache validation
     md5_checksum = Column(String(32), nullable=True)
-    # When this was cached
     cached_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    # Last time this file was accessed (for potential cleanup)
     last_accessed_at = Column(DateTime, default=datetime.utcnow, nullable=False)

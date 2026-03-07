@@ -1,4 +1,4 @@
-"""FastAPI application for invoice matcher."""
+"""FastAPI application for invoice matcher v2."""
 
 from contextlib import asynccontextmanager
 
@@ -9,12 +9,13 @@ from fastapi.responses import FileResponse
 
 from web.config import settings, BASE_DIR
 from web.database import init_db
-from web.routers import (
-    reconciliation_router,
-    known_transactions_router,
-    gdrive_router,
-)
-from web.routers.reconciliation_sse import router as reconciliation_sse_router
+from web.routers.invoices import router as invoices_router
+from web.routers.transactions import router as transactions_router
+from web.routers.dashboard import router as dashboard_router
+from web.routers.known_transactions import router as known_transactions_router
+from web.routers.gdrive import router as gdrive_router
+from web.routers.settings import router as settings_router
+from web.routers.sse import router as sse_router
 
 
 @asynccontextmanager
@@ -29,7 +30,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Invoice Matcher API",
     description="API for reconciling bank transactions with invoices",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -43,16 +44,19 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(reconciliation_router)
-app.include_router(reconciliation_sse_router)
+app.include_router(invoices_router)
+app.include_router(transactions_router)
+app.include_router(dashboard_router)
 app.include_router(known_transactions_router)
 app.include_router(gdrive_router)
+app.include_router(settings_router)
+app.include_router(sse_router)
 
 
 @app.get("/api/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "2.0.0"}
 
 
 @app.get("/api/config")

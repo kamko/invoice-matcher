@@ -1,11 +1,13 @@
 import { Route, Switch, Link, useLocation } from 'wouter'
 import { Toaster } from 'sonner'
-import { HomePage } from './pages/HomePage'
-import { MonthReportPage } from './pages/MonthReportPage'
+import { DashboardPage } from './pages/DashboardPage'
+import { TransactionsPage } from './pages/TransactionsPage'
+import { InvoicesPage } from './pages/InvoicesPage'
+import { ExportPage } from './pages/ExportPage'
 import { RulesPage } from './pages/RulesPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { cn } from './lib/utils'
-import { useLocalMode } from './context/LocalModeContext'
-import { Cloud, CloudOff } from 'lucide-react'
+import { useSSE } from './hooks/useSSE'
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const [location] = useLocation()
@@ -27,27 +29,10 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
   )
 }
 
-function LocalModeToggle() {
-  const { isLocalMode, setLocalMode } = useLocalMode()
-
-  return (
-    <button
-      onClick={() => setLocalMode(!isLocalMode)}
-      className={cn(
-        'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
-        isLocalMode
-          ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-          : 'bg-green-100 text-green-800 hover:bg-green-200'
-      )}
-      title={isLocalMode ? 'Local mode: Google Drive disabled' : 'Cloud mode: Google Drive enabled'}
-    >
-      {isLocalMode ? <CloudOff className="h-4 w-4" /> : <Cloud className="h-4 w-4" />}
-      {isLocalMode ? 'Local' : 'Cloud'}
-    </button>
-  )
-}
-
 function AppContent() {
+  // Connect to SSE for real-time updates
+  useSSE()
+
   return (
     <div className="min-h-screen bg-background">
       <Toaster
@@ -65,21 +50,25 @@ function AppContent() {
               <span className="text-xl font-bold cursor-pointer">Invoice Matcher</span>
             </Link>
             <nav className="flex items-center gap-2">
-              <NavLink href="/">Home</NavLink>
+              <NavLink href="/">Dashboard</NavLink>
+              <NavLink href="/transactions">Transactions</NavLink>
+              <NavLink href="/invoices">Invoices</NavLink>
+              <NavLink href="/export">Export</NavLink>
               <NavLink href="/rules">Rules</NavLink>
+              <NavLink href="/settings">Settings</NavLink>
             </nav>
           </div>
-          <LocalModeToggle />
         </div>
       </header>
 
       <main className="container py-6">
         <Switch>
-          <Route path="/" component={HomePage} />
-          <Route path="/month/:yearMonth">
-            {(params) => <MonthReportPage yearMonth={params.yearMonth} />}
-          </Route>
+          <Route path="/" component={DashboardPage} />
+          <Route path="/transactions" component={TransactionsPage} />
+          <Route path="/invoices" component={InvoicesPage} />
+          <Route path="/export" component={ExportPage} />
           <Route path="/rules" component={RulesPage} />
+          <Route path="/settings" component={SettingsPage} />
           <Route>
             <div className="text-center py-12">
               <h1 className="text-2xl font-bold">Page Not Found</h1>

@@ -33,23 +33,3 @@ def init_db() -> None:
     """Initialize the database by creating all tables."""
     from .models import Base
     Base.metadata.create_all(bind=engine)
-    # Run schema migrations for new columns
-    _run_migrations()
-
-
-def _run_migrations() -> None:
-    """Run schema migrations for new columns on existing tables."""
-    from sqlalchemy import text, inspect
-
-    with engine.connect() as conn:
-        inspector = inspect(engine)
-
-        # Migration: Add is_manual_upload column to invoice_payments
-        if 'invoice_payments' in inspector.get_table_names():
-            columns = [col['name'] for col in inspector.get_columns('invoice_payments')]
-            if 'is_manual_upload' not in columns:
-                conn.execute(text(
-                    "ALTER TABLE invoice_payments ADD COLUMN is_manual_upload BOOLEAN NOT NULL DEFAULT 0"
-                ))
-                conn.commit()
-                print("[MIGRATION] Added is_manual_upload column to invoice_payments")

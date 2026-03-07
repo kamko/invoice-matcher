@@ -1,13 +1,12 @@
 import * as React from "react"
-import { Plus, Pencil, Trash2, Loader2, RefreshCw } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2 } from "lucide-react"
 import {
   useKnownTransactions,
   useCreateKnownTransaction,
   useUpdateKnownTransaction,
   useDeleteKnownTransaction,
-  useReapplyRules,
   type KnownTransaction,
-} from "@/api/client"
+} from "../api/client"
 import {
   Table,
   TableBody,
@@ -15,35 +14,44 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select } from "@/components/ui/select"
+} from "../components/ui/table"
+import { Button } from "../components/ui/button"
+import { Badge } from "../components/ui/badge"
+import { Input } from "../components/ui/input"
+import { Label } from "../components/ui/label"
+import { Select } from "../components/ui/select"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from "@/components/ui/dialog"
-import { formatCurrency, formatDate } from "@/lib/utils"
+} from "../components/ui/dialog"
+
+function formatCurrency(amount: string) {
+  const num = parseFloat(amount)
+  return new Intl.NumberFormat('cs-CZ', {
+    style: 'currency',
+    currency: 'CZK',
+  }).format(num)
+}
+
+function formatDate(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString('cs-CZ')
+}
 
 export function RulesPage() {
   const { data: rules, isLoading } = useKnownTransactions()
   const createRule = useCreateKnownTransaction()
   const updateRule = useUpdateKnownTransaction()
   const deleteRule = useDeleteKnownTransaction()
-  const reapplyRules = useReapplyRules()
 
   const [editingRule, setEditingRule] = React.useState<KnownTransaction | null>(null)
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
-  const [reapplyResult, setReapplyResult] = React.useState<string | null>(null)
 
   // Form state
   const [formData, setFormData] = React.useState({
-    rule_type: "exact" as "exact" | "pattern" | "vendor" | "note" | "account",
+    rule_type: "vendor" as "exact" | "pattern" | "vendor" | "note" | "account",
     vendor_pattern: "",
     note_pattern: "",
     amount: "",
@@ -57,7 +65,7 @@ export function RulesPage() {
 
   const resetForm = () => {
     setFormData({
-      rule_type: "exact",
+      rule_type: "vendor",
       vendor_pattern: "",
       note_pattern: "",
       amount: "",
@@ -97,6 +105,7 @@ export function RulesPage() {
     const data = {
       rule_type: formData.rule_type,
       vendor_pattern: formData.vendor_pattern || undefined,
+      note_pattern: formData.note_pattern || undefined,
       amount: formData.amount || undefined,
       amount_min: formData.amount_min || undefined,
       amount_max: formData.amount_max || undefined,
@@ -122,6 +131,14 @@ export function RulesPage() {
     }
   }
 
+  const ruleTypeOptions = [
+    { value: 'vendor', label: 'Vendor Match' },
+    { value: 'exact', label: 'Exact Amount' },
+    { value: 'pattern', label: 'Pattern Match' },
+    { value: 'note', label: 'Note Match' },
+    { value: 'account', label: 'Account Match' },
+  ]
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -136,46 +153,14 @@ export function RulesPage() {
         <div>
           <h1 className="text-2xl font-bold">Known Transaction Rules</h1>
           <p className="text-muted-foreground">
-            Manage rules for automatically recognizing transactions
+            Manage rules for automatically recognizing transactions (fees, recurring payments, etc.)
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setReapplyResult(null)
-              reapplyRules.mutate(undefined, {
-                onSuccess: (data) => {
-                  setReapplyResult(
-                    `Moved ${data.transactions_moved} transaction(s) across ${data.months_updated} month(s)`
-                  )
-                },
-                onError: () => {
-                  setReapplyResult("Failed to reapply rules")
-                },
-              })
-            }}
-            disabled={reapplyRules.isPending}
-          >
-            {reapplyRules.isPending ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Reapply Rules
-          </Button>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Rule
-          </Button>
-        </div>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Rule
+        </Button>
       </div>
-
-      {reapplyResult && (
-        <div className="bg-muted px-4 py-2 rounded-md text-sm">
-          {reapplyResult}
-        </div>
-      )}
 
       <div className="border rounded-lg">
         <Table>
@@ -204,6 +189,7 @@ export function RulesPage() {
                   </TableCell>
                   <TableCell className="max-w-[200px] truncate">
                     {rule.vendor_pattern ||
+                      rule.note_pattern ||
                       (rule.amount && formatCurrency(rule.amount)) ||
                       rule.counter_account ||
                       "-"}
@@ -212,7 +198,7 @@ export function RulesPage() {
                     {rule.reason}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={rule.is_active ? "success" : "secondary"}>
+                    <Badge className={rule.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}>
                       {rule.is_active ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
@@ -253,13 +239,7 @@ export function RulesPage() {
           }
         }}
       >
-        <DialogContent
-          onClose={() => {
-            setIsCreateOpen(false)
-            setEditingRule(null)
-            resetForm()
-          }}
-        >
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {editingRule ? "Edit Rule" : "Create Rule"}
@@ -274,23 +254,32 @@ export function RulesPage() {
                 onChange={(e) =>
                   setFormData({ ...formData, rule_type: e.target.value as typeof formData.rule_type })
                 }
-                options={[
-                  { value: "exact", label: "Exact Match" },
-                  { value: "pattern", label: "Pattern Match" },
-                  { value: "vendor", label: "Vendor Match" },
-                ]}
+                options={ruleTypeOptions}
               />
             </div>
 
-            {formData.rule_type !== "exact" && (
+            {(formData.rule_type === "vendor" || formData.rule_type === "pattern") && (
               <div className="space-y-2">
-                <Label>Vendor Pattern</Label>
+                <Label>Vendor Pattern (regex)</Label>
                 <Input
                   value={formData.vendor_pattern}
                   onChange={(e) =>
                     setFormData({ ...formData, vendor_pattern: e.target.value })
                   }
-                  placeholder="Regex pattern"
+                  placeholder="e.g., Fio banka|bank fee"
+                />
+              </div>
+            )}
+
+            {formData.rule_type === "note" && (
+              <div className="space-y-2">
+                <Label>Note Pattern (regex)</Label>
+                <Input
+                  value={formData.note_pattern}
+                  onChange={(e) =>
+                    setFormData({ ...formData, note_pattern: e.target.value })
+                  }
+                  placeholder="e.g., Monthly fee"
                 />
               </div>
             )}
@@ -306,20 +295,23 @@ export function RulesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, amount: e.target.value })
                     }
-                    placeholder="Exact amount"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Counter Account</Label>
-                  <Input
-                    value={formData.counter_account}
-                    onChange={(e) =>
-                      setFormData({ ...formData, counter_account: e.target.value })
-                    }
-                    placeholder="Account number"
+                    placeholder="Exact amount (negative for expenses)"
                   />
                 </div>
               </>
+            )}
+
+            {formData.rule_type === "account" && (
+              <div className="space-y-2">
+                <Label>Counter Account</Label>
+                <Input
+                  value={formData.counter_account}
+                  onChange={(e) =>
+                    setFormData({ ...formData, counter_account: e.target.value })
+                  }
+                  placeholder="Account number or IBAN"
+                />
+              </div>
             )}
 
             {formData.rule_type === "pattern" && (
@@ -350,13 +342,13 @@ export function RulesPage() {
             )}
 
             <div className="space-y-2">
-              <Label>Reason *</Label>
+              <Label>Reason / Description *</Label>
               <Input
                 value={formData.reason}
                 onChange={(e) =>
                   setFormData({ ...formData, reason: e.target.value })
                 }
-                placeholder="Why is this a known transaction?"
+                placeholder="e.g., Bank fees, Monthly subscription"
                 required
               />
             </div>

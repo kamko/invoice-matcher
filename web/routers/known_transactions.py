@@ -12,6 +12,8 @@ from web.schemas.known_transaction import (
     KnownTransactionResponse,
 )
 from web.services.known_trans_service import KnownTransactionService
+from web.services.matching_service import MatchingService
+from web.database.models import Transaction
 
 router = APIRouter(prefix="/api/known-transactions", tags=["known-transactions"])
 
@@ -41,77 +43,24 @@ def create_known_transaction(
     data: KnownTransactionCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new known transaction rule and apply to existing months."""
+    """Create a new known transaction rule and apply to existing transactions."""
     service = KnownTransactionService(db)
     rule = service.create(data)
 
-    # Apply new rule to all existing completed months
-    apply_rule_to_existing_months(rule, db)
-
-    return rule
-
-
-def apply_rule_to_existing_months(rule, db: Session):
-    """Apply a new rule to all completed months, moving matching transactions to known."""
-    from web.database.models import MonthlyReconciliation
-    from models.transaction import Transaction
-    from decimal import Decimal
-    from datetime import datetime
-
-    service = KnownTransactionService(db)
-
-    # Get all months with results (regardless of status)
-    months = db.query(MonthlyReconciliation).filter(
-        MonthlyReconciliation.results_json.isnot(None)
+    # Apply new rule to all existing unmatched transactions
+    matching_service = MatchingService(db)
+    unmatched = db.query(Transaction).filter(
+        Transaction.status == 'unmatched'
     ).all()
 
-    for month in months:
-        results = month.results_json
-        if not results or "unmatched" not in results:
-            continue
-
-        unmatched = results.get("unmatched", [])
-        known = results.get("known", [])
-        newly_matched = []
-        still_unmatched = []
-
-        for t_data in unmatched:
-            # Reconstruct transaction to test against rule
-            try:
-                t = Transaction(
-                    id=t_data["id"],
-                    date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
-                    amount=Decimal(t_data["amount"]),
-                    currency=t_data["currency"],
-                    counter_account=t_data.get("counter_account") or "",
-                    counter_name=t_data.get("counter_name") or "",
-                    vs=t_data.get("vs") or "",
-                    note=t_data.get("note") or "",
-                    transaction_type=t_data.get("transaction_type") or "wire",
-                    raw_type=t_data.get("raw_type") or t_data.get("transaction_type") or "wire",
-                )
-
-                if service._matches_rule(t, rule):
-                    # Move to known
-                    newly_matched.append({
-                        **t_data,
-                        "rule_reason": rule.reason,
-                    })
-                else:
-                    still_unmatched.append(t_data)
-            except Exception:
-                # Keep in unmatched if reconstruction fails
-                still_unmatched.append(t_data)
-
-        if newly_matched:
-            # Update month results
-            results["unmatched"] = still_unmatched
-            results["known"] = known + newly_matched
-            month.results_json = results
-            month.unmatched_count = len(still_unmatched)
-            month.known_count = len(results["known"])
+    for t in unmatched:
+        if matching_service._matches_rule(t, rule):
+            t.status = 'known'
+            t.known_rule_id = rule.id
 
     db.commit()
+
+    return rule
 
 
 @router.put("/{rule_id}", response_model=KnownTransactionResponse)
@@ -138,81 +87,32 @@ def delete_known_transaction(rule_id: int, db: Session = Depends(get_db)):
 
 @router.post("/reapply-all")
 def reapply_all_rules(db: Session = Depends(get_db)):
-    """Reapply all active rules to all months with existing results."""
-    from web.database.models import MonthlyReconciliation
-    from models.transaction import Transaction
-    from decimal import Decimal
-    from datetime import datetime
-
+    """Reapply all active rules to all unmatched transactions."""
     service = KnownTransactionService(db)
+    matching_service = MatchingService(db)
     active_rules = service.get_all(active_only=True)
 
     if not active_rules:
-        return {"success": True, "message": "No active rules", "months_updated": 0, "transactions_moved": 0}
+        return {"success": True, "message": "No active rules", "transactions_updated": 0}
 
-    # Get all months with results
-    months = db.query(MonthlyReconciliation).filter(
-        MonthlyReconciliation.results_json.isnot(None)
+    # Get all unmatched transactions
+    unmatched = db.query(Transaction).filter(
+        Transaction.status == 'unmatched'
     ).all()
 
-    total_moved = 0
-    months_updated = 0
+    total_updated = 0
 
-    for month in months:
-        results = month.results_json
-        if not results or "unmatched" not in results:
-            continue
-
-        unmatched = results.get("unmatched", [])
-        known = results.get("known", [])
-        newly_matched = []
-        still_unmatched = []
-
-        for t_data in unmatched:
-            try:
-                t = Transaction(
-                    id=t_data["id"],
-                    date=datetime.strptime(t_data["date"], "%Y-%m-%d").date(),
-                    amount=Decimal(t_data["amount"]),
-                    currency=t_data["currency"],
-                    counter_account=t_data.get("counter_account") or "",
-                    counter_name=t_data.get("counter_name") or "",
-                    vs=t_data.get("vs") or "",
-                    note=t_data.get("note") or "",
-                    transaction_type=t_data.get("transaction_type") or "wire",
-                    raw_type=t_data.get("raw_type") or t_data.get("transaction_type") or "wire",
-                )
-
-                # Check against all active rules
-                matched_rule = None
-                for rule in active_rules:
-                    if service._matches_rule(t, rule):
-                        matched_rule = rule
-                        break
-
-                if matched_rule:
-                    newly_matched.append({
-                        **t_data,
-                        "rule_reason": matched_rule.reason,
-                    })
-                else:
-                    still_unmatched.append(t_data)
-            except Exception:
-                still_unmatched.append(t_data)
-
-        if newly_matched:
-            results["unmatched"] = still_unmatched
-            results["known"] = known + newly_matched
-            month.results_json = results
-            month.unmatched_count = len(still_unmatched)
-            month.known_count = len(results["known"])
-            total_moved += len(newly_matched)
-            months_updated += 1
+    for t in unmatched:
+        for rule in active_rules:
+            if matching_service._matches_rule(t, rule):
+                t.status = 'known'
+                t.known_rule_id = rule.id
+                total_updated += 1
+                break
 
     db.commit()
 
     return {
         "success": True,
-        "months_updated": months_updated,
-        "transactions_moved": total_moved,
+        "transactions_updated": total_updated,
     }

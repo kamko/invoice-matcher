@@ -2,13 +2,12 @@
 
 import re
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from sqlalchemy.orm import Session
 
-from web.database.models import KnownTransaction, KnownTransactionMatch
+from web.database.models import KnownTransaction, Transaction as TransactionModel
 from web.schemas.known_transaction import KnownTransactionCreate, KnownTransactionUpdate
-from models.transaction import Transaction
 
 
 class KnownTransactionService:
@@ -62,7 +61,7 @@ class KnownTransactionService:
         self.db.commit()
         return True
 
-    def match_transaction(self, transaction: Transaction) -> Optional[KnownTransaction]:
+    def match_transaction(self, transaction: Union[TransactionModel, 'Transaction']) -> Optional[KnownTransaction]:
         """Check if a transaction matches any known transaction rule."""
         rules = self.get_all(active_only=True)
 
@@ -72,7 +71,7 @@ class KnownTransactionService:
 
         return None
 
-    def _matches_rule(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _matches_rule(self, transaction, rule: KnownTransaction) -> bool:
         """Check if a transaction matches a specific rule."""
         if rule.rule_type == "exact":
             return self._matches_exact(transaction, rule)
@@ -86,104 +85,105 @@ class KnownTransactionService:
             return self._matches_account(transaction, rule)
         return False
 
-    def _matches_exact(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _get_amount(self, transaction) -> Decimal:
+        """Get amount from transaction (works with both model types)."""
+        return Decimal(str(transaction.amount))
+
+    def _get_counter_account(self, transaction) -> str:
+        """Get counter account from transaction."""
+        return getattr(transaction, 'counter_account', '') or ''
+
+    def _get_counter_name(self, transaction) -> str:
+        """Get counter name from transaction."""
+        return getattr(transaction, 'counter_name', '') or ''
+
+    def _get_vs(self, transaction) -> str:
+        """Get variable symbol from transaction."""
+        return getattr(transaction, 'vs', '') or ''
+
+    def _get_note(self, transaction) -> str:
+        """Get note from transaction."""
+        return getattr(transaction, 'note', '') or ''
+
+    def _matches_exact(self, transaction, rule: KnownTransaction) -> bool:
         """Check exact match (amount + counter_account or VS)."""
         if rule.amount is not None:
-            if abs(transaction.amount) != abs(rule.amount):
+            if abs(self._get_amount(transaction)) != abs(rule.amount):
                 return False
 
         if rule.counter_account:
-            if transaction.counter_account != rule.counter_account:
+            if self._get_counter_account(transaction) != rule.counter_account:
                 return False
 
         if rule.vs_pattern:
-            if transaction.vs != rule.vs_pattern:
+            if self._get_vs(transaction) != rule.vs_pattern:
                 return False
 
         # At least one criteria must be specified
         return bool(rule.amount or rule.counter_account or rule.vs_pattern)
 
-    def _matches_pattern(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _matches_pattern(self, transaction, rule: KnownTransaction) -> bool:
         """Check pattern match using regex."""
+        amount = self._get_amount(transaction)
+
         # Amount range check
-        if rule.amount_min is not None and abs(transaction.amount) < rule.amount_min:
+        if rule.amount_min is not None and abs(amount) < rule.amount_min:
             return False
-        if rule.amount_max is not None and abs(transaction.amount) > rule.amount_max:
+        if rule.amount_max is not None and abs(amount) > rule.amount_max:
             return False
 
         # Vendor pattern
         if rule.vendor_pattern:
             pattern = re.compile(rule.vendor_pattern, re.IGNORECASE)
-            text_to_match = f"{transaction.counter_name} {transaction.note}"
+            text_to_match = f"{self._get_counter_name(transaction)} {self._get_note(transaction)}"
             if not pattern.search(text_to_match):
                 return False
 
         # VS pattern
         if rule.vs_pattern:
-            if not re.match(rule.vs_pattern, transaction.vs, re.IGNORECASE):
+            vs = self._get_vs(transaction)
+            if not vs or not re.match(rule.vs_pattern, vs, re.IGNORECASE):
                 return False
 
         return True
 
-    def _matches_vendor(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _matches_vendor(self, transaction, rule: KnownTransaction) -> bool:
         """Check vendor-based match."""
         if not rule.vendor_pattern:
             return False
 
         pattern = re.compile(rule.vendor_pattern, re.IGNORECASE)
-        text_to_match = f"{transaction.counter_name} {transaction.note}"
+        text_to_match = f"{self._get_counter_name(transaction)} {self._get_note(transaction)}"
 
         return bool(pattern.search(text_to_match))
 
-    def _matches_note(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _matches_note(self, transaction, rule: KnownTransaction) -> bool:
         """Check note-based match using regex."""
         if not rule.note_pattern:
             return False
 
         try:
             pattern = re.compile(rule.note_pattern, re.IGNORECASE)
-            note = transaction.note or ""
+            note = self._get_note(transaction)
 
             if not pattern.search(note):
                 return False
 
             # Optionally also check amount range
-            if rule.amount_min is not None and abs(transaction.amount) < rule.amount_min:
+            amount = self._get_amount(transaction)
+            if rule.amount_min is not None and abs(amount) < rule.amount_min:
                 return False
-            if rule.amount_max is not None and abs(transaction.amount) > rule.amount_max:
+            if rule.amount_max is not None and abs(amount) > rule.amount_max:
                 return False
 
             return True
         except re.error:
             return False
 
-    def _matches_account(self, transaction: Transaction, rule: KnownTransaction) -> bool:
+    def _matches_account(self, transaction, rule: KnownTransaction) -> bool:
         """Check account/IBAN-based match."""
         if not rule.counter_account:
             return False
 
         # Exact match on counter_account (IBAN)
-        return transaction.counter_account == rule.counter_account
-
-    def record_match(
-        self,
-        rule: KnownTransaction,
-        transaction: Transaction,
-        session_id: Optional[int] = None
-    ) -> KnownTransactionMatch:
-        """Record a match between a rule and transaction."""
-        match = KnownTransactionMatch(
-            rule_id=rule.id,
-            transaction_id=transaction.id,
-            session_id=session_id,
-            transaction_data={
-                "date": str(transaction.date),
-                "amount": str(transaction.amount),
-                "counter_name": transaction.counter_name,
-                "note": transaction.note,
-            }
-        )
-        self.db.add(match)
-        self.db.commit()
-        self.db.refresh(match)
-        return match
+        return self._get_counter_account(transaction) == rule.counter_account

@@ -636,19 +636,54 @@ def extract_vendor(text: str) -> Optional[str]:
     return None
 
 
-def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
+def _parse_date_from_filename(filename: str) -> Optional[datetime]:
     """
-    Parse an uploaded PDF file (without filename convention).
+    Try to extract date from filename convention: YYYY-MM-DD-NNN_type_vendor.pdf
 
-    Extracts all info from PDF content. For scanned receipts,
-    tries to extract QR code and fetch data from e-kasa API.
+    Returns datetime object or None if filename doesn't match pattern.
+    """
+    match = re.match(r"(\d{4}-\d{2}-\d{2})-\d+_", filename)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
+def parse_uploaded_pdf(pdf_path: Path) -> dict:
+    """
+    Parse an uploaded PDF file.
+
+    Date extraction priority: filename -> LLM -> naive regex -> error
 
     Args:
         pdf_path: Path to the PDF file
 
     Returns:
-        Invoice object or None if parsing fails
+        Dict with extracted data, or raises ValueError if date cannot be determined
     """
+    filename = pdf_path.name
+    result = {
+        'vendor': None,
+        'amount': None,
+        'invoice_date': None,
+        'payment_type': 'unknown',
+        'vs': None,
+        'iban': None,
+        'is_credit_note': False,
+    }
+
+    # 1. Try to parse date from filename FIRST
+    filename_date = _parse_date_from_filename(filename)
+    if filename_date:
+        result['invoice_date'] = filename_date.date()
+        # Also extract payment_type and vendor from filename if present
+        match = re.match(r"\d{4}-\d{2}-\d{2}-\d+_([a-zA-Z0-9-]+)_(.+)\.pdf", filename)
+        if match:
+            result['payment_type'] = match.group(1)
+            result['vendor'] = match.group(2).replace("-", " ").title()
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             text = ""
@@ -660,91 +695,96 @@ def parse_uploaded_pdf(pdf_path: Path) -> Optional[Invoice]:
             if not text.strip():
                 ekasa_receipt = parse_ekasa_pdf(pdf_path)
                 if ekasa_receipt:
-                    return Invoice(
-                        file_path=pdf_path,
-                        invoice_date=ekasa_receipt.issue_date.date(),
-                        invoice_number=ekasa_receipt.receipt_id,
-                        payment_type="card",
-                        vendor=ekasa_receipt.vendor_name,
-                        amount=ekasa_receipt.total_price,
-                        vs=None
-                    )
-                return None
+                    return {
+                        'vendor': ekasa_receipt.vendor_name,
+                        'amount': ekasa_receipt.total_price,
+                        'invoice_date': ekasa_receipt.issue_date.date(),
+                        'payment_type': 'card',
+                        'vs': None,
+                        'iban': None,
+                        'is_credit_note': False,
+                    }
+                # No text and no e-kasa, but we might have filename date
+                if result['invoice_date']:
+                    return result
+                raise ValueError(f"Cannot extract date from image PDF: {filename}")
 
-            # Try LLM extraction first (more accurate for vendor)
-            amount = None
-            vs = None
-            vendor = None
-
+            # 2. Try LLM extraction (for amount, vs, vendor, and date if needed)
+            llm_date = None
             try:
                 from parsers.llm_extractor import extract_invoice_data_llm
                 llm_data = extract_invoice_data_llm(text)
                 if llm_data.get("amount"):
-                    amount = llm_data["amount"]
+                    result['amount'] = llm_data["amount"]
                 if llm_data.get("vs"):
-                    vs = llm_data["vs"]
-                if llm_data.get("vendor"):
-                    vendor = llm_data["vendor"]
+                    result['vs'] = llm_data["vs"]
+                if llm_data.get("iban"):
+                    result['iban'] = llm_data["iban"]
+                if llm_data.get("vendor") and not result['vendor']:
+                    result['vendor'] = llm_data["vendor"]
+                if llm_data.get("date"):
+                    llm_date = llm_data["date"]
             except Exception:
                 pass
 
-            # Fallback to regex if LLM didn't extract
-            if amount is None:
-                amount = extract_amount(text)
-            if vs is None:
-                vs = extract_vs(text)
-            if vendor is None:
-                vendor = extract_vendor(text)
+            # 3. Fallback to regex if LLM didn't extract
+            if result['amount'] is None:
+                result['amount'] = extract_amount(text)
+            if result['vs'] is None:
+                result['vs'] = extract_vs(text)
+            if result['vendor'] is None:
+                result['vendor'] = extract_vendor(text)
 
-            invoice_date_dt = extract_date(text)
+            # Date priority: filename (already set) -> LLM -> naive regex
+            if result['invoice_date'] is None:
+                if llm_date:
+                    result['invoice_date'] = llm_date
+                else:
+                    naive_date = extract_date(text)
+                    if naive_date:
+                        result['invoice_date'] = naive_date.date()
 
             # If no amount found in text, try e-kasa as fallback
-            if amount is None:
+            if result['amount'] is None:
                 ekasa_receipt = parse_ekasa_pdf(pdf_path)
                 if ekasa_receipt:
-                    return Invoice(
-                        file_path=pdf_path,
-                        invoice_date=ekasa_receipt.issue_date.date(),
-                        invoice_number=ekasa_receipt.receipt_id,
-                        payment_type="card",
-                        vendor=ekasa_receipt.vendor_name,
-                        amount=ekasa_receipt.total_price,
-                        vs=None
-                    )
+                    result['amount'] = ekasa_receipt.total_price
+                    if result['invoice_date'] is None:
+                        result['invoice_date'] = ekasa_receipt.issue_date.date()
+                    if result['vendor'] is None:
+                        result['vendor'] = ekasa_receipt.vendor_name
 
-            # Use today if no date found
-            if invoice_date_dt:
-                invoice_date = invoice_date_dt.date()
-            else:
-                invoice_date = datetime.now().date()
+            # 4. If still no date, raise error
+            if result['invoice_date'] is None:
+                raise ValueError(f"Cannot determine invoice date for: {filename}")
 
-            # Generate invoice number from VS or filename
-            invoice_number = vs or pdf_path.stem
+            # Detect wire transfer from content
+            if result['iban'] or result['vs']:
+                result['payment_type'] = 'wire'
 
-            return Invoice(
-                file_path=pdf_path,
-                invoice_date=invoice_date,
-                invoice_number=invoice_number,
-                payment_type="unknown",
-                vendor=vendor or "unknown",
-                amount=amount,
-                vs=vs
-            )
+            return result
 
+    except ValueError:
+        raise
     except Exception as e:
         # Try e-kasa as last resort
         try:
             ekasa_receipt = parse_ekasa_pdf(pdf_path)
             if ekasa_receipt:
-                return Invoice(
-                    file_path=pdf_path,
-                    invoice_date=ekasa_receipt.issue_date.date(),
-                    invoice_number=ekasa_receipt.receipt_id,
-                    payment_type="card",
-                    vendor=ekasa_receipt.vendor_name,
-                    amount=ekasa_receipt.total_price,
-                    vs=None
-                )
+                return {
+                    'vendor': ekasa_receipt.vendor_name,
+                    'amount': ekasa_receipt.total_price,
+                    'invoice_date': ekasa_receipt.issue_date.date(),
+                    'payment_type': 'card',
+                    'vs': None,
+                    'iban': None,
+                    'is_credit_note': False,
+                }
         except Exception:
             pass
-        return None
+
+        # If we have filename date, return with that
+        if result['invoice_date']:
+            return result
+
+        raise ValueError(f"Failed to parse PDF {filename}: {e}")
