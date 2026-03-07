@@ -20,6 +20,7 @@ class Invoice:
     vendor: str
     amount: Optional[Decimal] = None
     vs: Optional[str] = None  # Variable Symbol extracted from PDF
+    iban: Optional[str] = None  # IBAN extracted from PDF
     gdrive_file_id: Optional[str] = None  # Google Drive file ID
     receipt_index: int = 0  # Index within multi-receipt PDFs (0 for single-receipt)
     _is_credit_note: Optional[bool] = None  # Explicit credit note flag (overrides filename detection)

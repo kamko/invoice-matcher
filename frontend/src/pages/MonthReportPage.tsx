@@ -1,7 +1,8 @@
 import * as React from "react"
 import { Link } from "wouter"
-import { ArrowLeft, Loader2, RefreshCw, Upload } from "lucide-react"
-import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useRenameInvoiceFile, useSkipTransaction, useManualMatch, useApproveMatch, type Transaction } from "@/api/client"
+import { ArrowLeft, Loader2, RefreshCw, Upload, Banknote } from "lucide-react"
+import { toast } from "sonner"
+import { useMonth, useMarkKnownMonthly, useMatchWithPdfMonthly, useMonthInvoices, useMonths, useUploadInvoice, useRenameInvoice, useRenameInvoiceFile, useSkipTransaction, useManualMatch, useApproveMatch, useDeleteInvoice, type Transaction } from "@/api/client"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { SummaryCards } from "@/components/report/SummaryCards"
@@ -36,6 +37,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const skipTransaction = useSkipTransaction()
   const manualMatch = useManualMatch()
   const approveMatch = useApproveMatch()
+  const deleteInvoice = useDeleteInvoice()
 
   const [selectedTab, setSelectedTab] = React.useState("unmatched")
   const [markKnownTransaction, setMarkKnownTransaction] = React.useState<Transaction | null>(null)
@@ -43,7 +45,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const [showUploadInvoice, setShowUploadInvoice] = React.useState(false)
   const [skipTransactionData, setSkipTransactionData] = React.useState<Transaction | null>(null)
   const [manualMatchTransaction, setManualMatchTransaction] = React.useState<Transaction | null>(null)
-  const { startSync } = useSync()
+  const { startSync, startFioRefresh } = useSync()
 
   // Helper to get folder info for a month from API data
   const getMonthFolder = React.useCallback((ym: string) => {
@@ -83,7 +85,7 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
   const handleResync = () => {
     const fioToken = localStorage.getItem("fio_token")
     if (!fioToken) {
-      alert("Fio token not found. Please configure it in Settings.")
+      toast.error("Fio token not found. Please configure it in Settings.")
       return
     }
 
@@ -99,11 +101,27 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
     })
   }
 
-  const handleUploadInvoice = async (file: File, invoiceDate: string) => {
+  const handleFioRefresh = () => {
+    const fioToken = localStorage.getItem("fio_token")
+    if (!fioToken) {
+      toast.error("Fio token not found. Please configure it in Settings.")
+      return
+    }
+
+    startFioRefresh({
+      yearMonth,
+      fioToken,
+      onComplete: () => refetch(),
+    })
+  }
+
+  const handleUploadInvoice = async (file: File, invoiceDate: string, vendor?: string, paymentType?: string) => {
     await uploadInvoice.mutateAsync({
       yearMonth,
       file,
       invoiceDate,
+      vendor,
+      paymentType,
     })
     setShowUploadInvoice(false)
     refetch()
@@ -209,7 +227,16 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
           </Button>
           <Button
             variant="outline"
+            onClick={handleFioRefresh}
+            title="Refresh transactions from Fio Bank and re-match (fast, no PDF re-parsing)"
+          >
+            <Banknote className="h-4 w-4 mr-2" />
+            Fio Refresh
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleResync}
+            title="Full re-sync including PDF re-parsing from Google Drive"
           >
             <RefreshCw className="h-4 w-4 mr-2" />
             Re-sync
@@ -304,6 +331,12 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
               refetch()
             }}
             isReanalyzing={renameInvoiceFile.isPending}
+            onDelete={async (fileId) => {
+              await deleteInvoice.mutateAsync(fileId)
+              toast.success("Invoice deleted")
+              refetch()
+            }}
+            isDeleting={deleteInvoice.isPending}
           />
         </TabsContent>
       </Tabs>

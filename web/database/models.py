@@ -143,6 +143,14 @@ class InvoicePayment(Base):
     amount = Column(Numeric(12, 2), nullable=True)
     # Invoice vendor
     vendor = Column(String(255), nullable=True)
+    # Payment type (card, wire, etc.) - may differ from filename if IBAN/VS detected
+    payment_type = Column(String(50), nullable=True)
+    # Variable symbol for wire transfers
+    variable_symbol = Column(String(50), nullable=True)
+    # IBAN for wire transfers
+    iban = Column(String(50), nullable=True)
+    # Invoice date
+    invoice_date = Column(DateTime, nullable=True)
     # Flag for manually uploaded invoices (protected from sync override)
     is_manual_upload = Column(Boolean, default=False, nullable=False)
     # When this record was created/updated

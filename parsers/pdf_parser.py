@@ -1,15 +1,135 @@
 """Parser for invoice PDF files."""
 
+import io
 import re
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import pdfplumber
 
 from models.invoice import Invoice
 from parsers.ekasa_parser import parse_ekasa_pdf
+
+
+def parse_invoice_from_bytes(pdf_bytes: bytes, filename: str) -> List[Invoice]:
+    """
+    Parse a PDF from bytes in memory, returning Invoice objects.
+
+    This avoids disk I/O by using BytesIO directly with pdfplumber.
+
+    Args:
+        pdf_bytes: Raw PDF content as bytes
+        filename: Original filename for metadata extraction
+
+    Returns:
+        List of Invoice objects
+    """
+    # Parse filename: YYYY-MM-DD-NNN_type_vendor.pdf
+    match = re.match(r"(\d{4}-\d{2}-\d{2})-(\d+)_([a-zA-Z0-9-]+)_(.+)\.pdf", filename)
+    if not match:
+        return []
+
+    date_str, invoice_num, payment_type, vendor = match.groups()
+
+    try:
+        invoice_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return []
+
+    invoice_number = f"{date_str}-{invoice_num}"
+
+    # Parse PDF from bytes using BytesIO
+    page_texts = []
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                page_texts.append(page_text)
+    except Exception:
+        return []
+
+    text = "\n".join(page_texts)
+    text_has_content = len(text.strip()) > 50
+
+    if text_has_content:
+        # TEXT PDF - check if multi-page with separate receipts per page
+        if len(page_texts) > 1:
+            from parsers.llm_extractor import extract_invoice_data_llm
+
+            credit_note_patterns = [
+                r"Opravný\s+daňový\s+doklad",
+                r"Dobropis",
+                r"Credit\s+Note",
+                r"Storno",
+            ]
+            credit_note_regex = re.compile("|".join(credit_note_patterns), re.IGNORECASE)
+
+            page_amounts = []
+            page_is_credit_note = []
+            for page_text in page_texts:
+                try:
+                    llm_data = extract_invoice_data_llm(page_text)
+                    if llm_data.get("amount"):
+                        page_amounts.append(llm_data["amount"])
+                    else:
+                        page_amounts.append(None)
+                except Exception:
+                    page_amounts.append(None)
+
+                is_cn = bool(credit_note_regex.search(page_text))
+                page_is_credit_note.append(is_cn)
+
+            valid_amounts = [a for a in page_amounts if a is not None]
+            if len(valid_amounts) > 1:
+                invoices = []
+                for i, amount in enumerate(page_amounts):
+                    if amount is not None:
+                        inv = Invoice(
+                            file_path=Path(filename),  # Use Path with just filename
+                            invoice_date=invoice_date,
+                            amount=amount,
+                            vendor=vendor.replace("-", " ").title(),
+                            invoice_number=f"{invoice_number}-{i+1}",
+                            payment_type=payment_type,
+                            _is_credit_note=page_is_credit_note[i],
+                            receipt_index=i,
+                        )
+                        invoices.append(inv)
+                return invoices
+
+        # Single receipt - use LLM to extract amount, IBAN, VS
+        from parsers.llm_extractor import extract_invoice_data_llm
+        try:
+            llm_data = extract_invoice_data_llm(text)
+            amount = llm_data.get("amount")
+            # Detect actual payment type from invoice content
+            # If IBAN or VS is present, it's a wire transfer regardless of filename
+            actual_payment_type = payment_type
+            if llm_data.get("iban") or llm_data.get("vs"):
+                actual_payment_type = "wire"
+        except Exception:
+            amount = None
+            actual_payment_type = payment_type
+
+        if amount:
+            inv = Invoice(
+                file_path=Path(filename),  # Use Path with just filename
+                invoice_date=invoice_date,
+                amount=amount,
+                vendor=vendor.replace("-", " ").title(),
+                invoice_number=invoice_number,
+                payment_type=actual_payment_type,
+            )
+            # Store extracted IBAN/VS for matching
+            if llm_data.get("vs"):
+                inv.vs = llm_data["vs"]
+            if llm_data.get("iban"):
+                inv.iban = llm_data["iban"]
+            return [inv]
+
+    return []
 
 
 def parse_invoices(directory: Path) -> List[Invoice]:
@@ -77,11 +197,9 @@ def parse_invoice_pdf_multi(pdf_path: Path) -> List[Invoice]:
     if text_has_content:
         # TEXT PDF - check if multi-page with separate receipts per page
         if len(page_texts) > 1:
-            # Check if each page looks like a separate receipt (has amount pattern)
-            # Handle negative amounts for credit notes: "Celkom: -18,88 EUR"
-            # Prioritize VAT-inclusive patterns
-            amount_pattern_vat = re.compile(r"(?:Celkom\s*vrátane\s*DPH|Total\s*(?:with|incl\.?)\s*VAT|Suma\s*s\s*DPH)[:\s(EUR)]*(-?\d+[.,]\d{2})", re.IGNORECASE)
-            amount_pattern = re.compile(r"(?:Cena|Suma|Total|Amount|Celkom)[:\s]*(-?\d+[.,]\d{2})\s*(?:EUR|€|\$)?", re.IGNORECASE)
+            # Use LLM to extract amount from each page
+            from parsers.llm_extractor import extract_invoice_data_llm
+
             # Credit note detection patterns (Slovak)
             credit_note_patterns = [
                 r"Opravný\s+daňový\s+doklad",  # Corrective tax document
@@ -94,15 +212,16 @@ def parse_invoice_pdf_multi(pdf_path: Path) -> List[Invoice]:
             page_amounts = []
             page_is_credit_note = []
             for page_text in page_texts:
-                # Check amount - prefer VAT-inclusive pattern first
-                match = amount_pattern_vat.search(page_text)
-                if not match:
-                    match = amount_pattern.search(page_text)
-                if match:
-                    amt_str = match.group(1).replace(",", ".")
-                    page_amounts.append(Decimal(amt_str))
-                else:
+                # Use LLM to extract amount (gets WITH-VAT amount)
+                try:
+                    llm_data = extract_invoice_data_llm(page_text)
+                    if llm_data.get("amount"):
+                        page_amounts.append(llm_data["amount"])
+                    else:
+                        page_amounts.append(None)
+                except Exception:
                     page_amounts.append(None)
+
                 # Check if this page is a credit note
                 is_cn = bool(credit_note_regex.search(page_text))
                 page_is_credit_note.append(is_cn)
@@ -197,9 +316,11 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
     # Build invoice number from date and sequence
     invoice_number = f"{date_str}-{invoice_num}"
 
-    # Extract amount and VS from PDF content
+    # Extract amount, VS, and IBAN from PDF content
     amount = None
     vs = None
+    iban = None
+    actual_payment_type = payment_type  # May be overridden based on content
 
     # 1. Try PDF text extraction
     text = ""
@@ -224,6 +345,12 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
                 amount = llm_data["amount"]
             if llm_data.get("vs"):
                 vs = llm_data["vs"]
+            if llm_data.get("iban"):
+                iban = llm_data["iban"]
+            # Detect actual payment type from invoice content
+            # If IBAN or VS is present, it's a wire transfer regardless of filename
+            if iban or vs:
+                actual_payment_type = "wire"
         except Exception:
             pass
 
@@ -261,10 +388,11 @@ def parse_invoice_pdf(pdf_path: Path) -> Optional[Invoice]:
         file_path=pdf_path,
         invoice_date=invoice_date,
         invoice_number=invoice_number,
-        payment_type=payment_type,
+        payment_type=actual_payment_type,
         vendor=vendor,
         amount=amount,
-        vs=vs
+        vs=vs,
+        iban=iban,
     )
 
 

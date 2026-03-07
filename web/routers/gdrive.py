@@ -234,17 +234,29 @@ def rename_file(
             payment.filename = new_filename
             affected_months.add(payment.invoice_month)
 
-        # Mark affected months as needing resync (clear results so matching is re-done)
+        # Update filename in results_json (so UI shows new name without full resync)
         for year_month in affected_months:
             month = db.query(MonthlyReconciliation).filter(
                 MonthlyReconciliation.year_month == year_month
             ).first()
-            if month:
-                # Clear results to force re-matching on next sync
-                month.results_json = None
-                month.status = "pending"
-                month.matched_count = None
-                month.unmatched_count = None
+            if month and month.results_json:
+                results = month.results_json
+                updated = False
+                # Update in matched results
+                for match in results.get("matched", []):
+                    inv = match.get("invoice")
+                    if inv and inv.get("gdrive_file_id") == file_id:
+                        inv["filename"] = new_filename
+                        updated = True
+                # Update in unmatched_invoices
+                for inv in results.get("unmatched_invoices", []):
+                    if inv.get("gdrive_file_id") == file_id:
+                        inv["filename"] = new_filename
+                        updated = True
+                if updated:
+                    month.results_json = results
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(month, "results_json")
 
         db.commit()
 

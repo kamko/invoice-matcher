@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
 import { Calendar, ChevronRight, Loader2, Settings, RefreshCw, FolderOpen, ExternalLink, CheckCircle2, Download, Layers } from "lucide-react"
+import { toast } from "sonner"
 import { useMonths, useGDriveStatus, useGDriveAuthUrl, useSetting, useSetSetting, useAppConfig } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,9 +11,11 @@ import { Input } from "@/components/ui/input"
 import { FolderPickerDialog } from "@/components/FolderPickerDialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useSync } from "@/context/SyncContext"
+import { useLocalMode } from "@/context/LocalModeContext"
 
 export function HomePage() {
   const [, setLocation] = useLocation()
+  const { isLocalMode } = useLocalMode()
   const { data: months, isLoading, refetch: refetchMonths } = useMonths()
   const { data: gdriveStatus, refetch: refetchGdriveStatus } = useGDriveStatus()
   const getAuthUrl = useGDriveAuthUrl()
@@ -62,7 +65,7 @@ export function HomePage() {
       const response = await fetch(`/api/months/${yearMonth}/download-invoices`)
       if (!response.ok) {
         const err = await response.json()
-        alert(err.detail || "Failed to download")
+        toast.error(err.detail || "Failed to download")
         return
       }
       // Create blob and download
@@ -76,7 +79,7 @@ export function HomePage() {
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (error) {
-      alert("Failed to download invoices")
+      toast.error("Failed to download invoices")
     } finally {
       setDownloadingMonth(null)
     }
@@ -200,7 +203,9 @@ export function HomePage() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">Google Drive:</span>
-                {gdriveStatus?.authenticated ? (
+                {isLocalMode ? (
+                  <span className="text-sm text-muted-foreground">Disabled (Local Mode)</span>
+                ) : gdriveStatus?.authenticated ? (
                   <span className="text-sm text-green-600">Connected</span>
                 ) : (
                   <>
@@ -244,7 +249,7 @@ export function HomePage() {
                   variant="outline"
                   className="flex-1 justify-start"
                   onClick={() => setShowFolderPicker(true)}
-                  disabled={!gdriveStatus?.authenticated}
+                  disabled={isLocalMode || !gdriveStatus?.authenticated}
                 >
                   <FolderOpen className="h-4 w-4 mr-2" />
                   {parentFolderName || "Select parent folder..."}

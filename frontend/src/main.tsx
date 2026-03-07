@@ -1,11 +1,22 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import App from './App'
 import { SyncProvider } from './context/SyncContext'
+import { LocalModeProvider } from './context/LocalModeContext'
 import './index.css'
 
+// Global mutation error handler - shows toast for all mutation errors
+const mutationCache = new MutationCache({
+  onError: (error) => {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    toast.error(message)
+  },
+})
+
 const queryClient = new QueryClient({
+  mutationCache,
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60, // 1 minute
@@ -17,9 +28,11 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <SyncProvider>
-        <App />
-      </SyncProvider>
+      <LocalModeProvider>
+        <SyncProvider>
+          <App />
+        </SyncProvider>
+      </LocalModeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 )

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 const API_BASE = '/api'
 
@@ -13,7 +14,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || `HTTP ${response.status}`)
+    const errorMessage = error.detail || `HTTP ${response.status}`
+    throw new Error(errorMessage)
   }
 
   if (response.status === 204) {
@@ -21,6 +23,17 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   }
 
   return response.json()
+}
+
+// Show error toast for API errors
+export function showApiError(error: unknown, context?: string) {
+  const message = error instanceof Error ? error.message : 'Unknown error'
+  toast.error(context ? `${context}: ${message}` : message)
+}
+
+// Show success toast
+export function showSuccess(message: string) {
+  toast.success(message)
 }
 
 // Types
@@ -415,6 +428,7 @@ export function useManualMatch() {
       formData.append('transaction_id', transactionId)
       formData.append('invoice_file_id', invoiceFileId)
 
+
       const response = await fetch(`/api/months/${yearMonth}/manual-match`, {
         method: 'POST',
         body: formData,
@@ -557,14 +571,18 @@ export interface UploadInvoiceResponse {
 export function useUploadInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ yearMonth, file, invoiceDate }: {
+    mutationFn: async ({ yearMonth, file, invoiceDate, vendor, paymentType }: {
       yearMonth: string
       file: File
       invoiceDate: string  // YYYY-MM-DD format
+      vendor?: string
+      paymentType?: string
     }): Promise<UploadInvoiceResponse> => {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('invoice_date', invoiceDate)
+      if (vendor) formData.append('vendor', vendor)
+      if (paymentType) formData.append('payment_type', paymentType)
 
       const response = await fetch(`/api/months/${yearMonth}/upload-invoice`, {
         method: 'POST',
@@ -581,6 +599,32 @@ export function useUploadInvoice() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['month', variables.yearMonth] })
       queryClient.invalidateQueries({ queryKey: ['month-invoices', variables.yearMonth] })
+    },
+  })
+}
+
+// Delete invoice
+export function useDeleteInvoice() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (fileId: string): Promise<{ success: boolean; message: string; affected_months: string[] }> => {
+      const response = await fetch(`${API_BASE}/invoices/${fileId}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+    onSuccess: (data) => {
+      // Invalidate all affected months
+      for (const month of data.affected_months) {
+        queryClient.invalidateQueries({ queryKey: ['month', month] })
+        queryClient.invalidateQueries({ queryKey: ['month-invoices', month] })
+      }
     },
   })
 }

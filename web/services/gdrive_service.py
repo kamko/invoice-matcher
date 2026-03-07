@@ -447,6 +447,27 @@ class GDriveService:
 
         return True
 
+    def delete_file(self, file_id: str) -> bool:
+        """Delete a file from Google Drive.
+
+        Args:
+            file_id: The ID of the file to delete
+
+        Returns:
+            True if successful
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        service.files().delete(fileId=file_id).execute()
+
+        return True
+
     def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]], db=None) -> bytes:
         """Download multiple files from Google Drive and return as a zip.
 

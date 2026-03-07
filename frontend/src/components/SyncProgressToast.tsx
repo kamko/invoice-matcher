@@ -1,7 +1,9 @@
 import * as React from "react"
 import { Loader2, CheckCircle, XCircle, Check, ChevronDown, ChevronUp, X } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useLocalMode } from "@/context/LocalModeContext"
 
 interface SyncProgressToastProps {
   open: boolean
@@ -10,6 +12,7 @@ interface SyncProgressToastProps {
   fioToken: string
   gdriveFolderId?: string
   prevMonthGdriveFolderId?: string
+  fioOnly?: boolean  // Only refresh transactions, don't re-parse PDFs
   onComplete: () => void
 }
 
@@ -29,8 +32,10 @@ export function SyncProgressToast({
   fioToken,
   gdriveFolderId,
   prevMonthGdriveFolderId,
+  fioOnly,
   onComplete,
 }: SyncProgressToastProps) {
+  const { isLocalMode } = useLocalMode()
   const [expanded, setExpanded] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState<string>("started")
   const [message, setMessage] = React.useState("Starting...")
@@ -67,15 +72,25 @@ export function SyncProgressToast({
 
     const runSync = async () => {
       try {
-        const response = await fetch(`/api/months/${yearMonth}/sync-stream`, {
+        // Use different endpoint for Fio-only refresh (faster, no PDF re-parsing)
+        const endpoint = fioOnly
+          ? `/api/months/${yearMonth}/fio-refresh-stream`
+          : `/api/months/${yearMonth}/sync-stream`
+
+        const body = fioOnly
+          ? { fio_token: fioToken }
+          : {
+              year_month: yearMonth,
+              fio_token: fioToken,
+              gdrive_folder_id: isLocalMode ? undefined : (gdriveFolderId || undefined),
+              prev_month_gdrive_folder_id: isLocalMode ? undefined : (prevMonthGdriveFolderId || undefined),
+              local_only: isLocalMode,
+            }
+
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            year_month: yearMonth,
-            fio_token: fioToken,
-            gdrive_folder_id: gdriveFolderId || undefined,
-            prev_month_gdrive_folder_id: prevMonthGdriveFolderId || undefined,
-          }),
+          body: JSON.stringify(body),
           signal: abortController.signal,
         })
 
@@ -165,6 +180,7 @@ export function SyncProgressToast({
           break
         case "error":
           setError(data.message as string)
+          toast.error(`Sync failed: ${data.message}`)
           break
       }
     }
@@ -263,6 +279,11 @@ export function SyncProgressToast({
               </div>
             ) : (
               <>
+                {/* Current action detail */}
+                <div className="bg-muted/50 p-2 rounded text-xs font-mono truncate" title={message}>
+                  {message}
+                </div>
+
                 {/* Step list */}
                 <div className="space-y-1">
                   {STEPS.map((step) => {

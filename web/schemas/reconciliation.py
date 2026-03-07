@@ -100,13 +100,13 @@ class MonthResponse(BaseModel):
     last_synced_at: Optional[datetime] = None
     created_at: datetime
 
-    matched_count: int
-    unmatched_count: int
-    review_count: int
-    known_count: int
-    fee_count: int = 0
-    income_count: int = 0
-    skipped_count: int = 0
+    matched_count: Optional[int] = 0
+    unmatched_count: Optional[int] = 0
+    review_count: Optional[int] = 0
+    known_count: Optional[int] = 0
+    fee_count: Optional[int] = 0
+    income_count: Optional[int] = 0
+    skipped_count: Optional[int] = 0
 
     matched: List[MatchResultResponse] = []
     unmatched: List[TransactionResponse] = []

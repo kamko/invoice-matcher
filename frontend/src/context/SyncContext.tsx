@@ -10,6 +10,7 @@ interface SyncState {
   fioToken: string
   gdriveFolderId?: string
   prevMonthGdriveFolderId?: string
+  fioOnly?: boolean  // Only refresh transactions, don't re-parse PDFs
 }
 
 interface SyncContextValue {
@@ -18,6 +19,11 @@ interface SyncContextValue {
     fioToken: string
     gdriveFolderId?: string
     prevMonthGdriveFolderId?: string
+    onComplete?: () => void
+  }) => void
+  startFioRefresh: (params: {
+    yearMonth: string
+    fioToken: string
     onComplete?: () => void
   }) => void
   startBatchSync: (params: {
@@ -56,6 +62,25 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       fioToken: params.fioToken,
       gdriveFolderId: params.gdriveFolderId,
       prevMonthGdriveFolderId: params.prevMonthGdriveFolderId,
+      fioOnly: false,
+    })
+    if (params.onComplete) {
+      setOnCompleteCallback(() => params.onComplete)
+    }
+  }, [])
+
+  const startFioRefresh = React.useCallback((params: {
+    yearMonth: string
+    fioToken: string
+    onComplete?: () => void
+  }) => {
+    setSyncState({
+      isOpen: true,
+      mode: "single",
+      yearMonth: params.yearMonth,
+      months: [],
+      fioToken: params.fioToken,
+      fioOnly: true,
     })
     if (params.onComplete) {
       setOnCompleteCallback(() => params.onComplete)
@@ -92,10 +117,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const value = React.useMemo(() => ({
     startSync,
+    startFioRefresh,
     startBatchSync,
     isSyncing: syncState.isOpen,
     syncingMonth: syncState.yearMonth,
-  }), [startSync, startBatchSync, syncState.isOpen, syncState.yearMonth])
+  }), [startSync, startFioRefresh, startBatchSync, syncState.isOpen, syncState.yearMonth])
 
   return (
     <SyncContext.Provider value={value}>
@@ -108,6 +134,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           fioToken={syncState.fioToken}
           gdriveFolderId={syncState.gdriveFolderId}
           prevMonthGdriveFolderId={syncState.prevMonthGdriveFolderId}
+          fioOnly={syncState.fioOnly}
           onComplete={handleComplete}
         />
       )}

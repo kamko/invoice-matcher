@@ -1159,6 +1159,10 @@ async def match_with_pdf_monthly(
                 transaction_id=transaction_id,
                 amount=invoice.amount,
                 vendor=final_vendor,
+                payment_type=invoice.payment_type,
+                variable_symbol=invoice.vs,
+                iban=invoice.iban,
+                invoice_date=invoice.invoice_date,
                 is_manual_upload=True,  # Protect from sync override
             )
             db.add(payment)
@@ -1358,16 +1362,39 @@ async def rename_invoice_file(
     if not cache:
         raise HTTPException(status_code=404, detail="PDF not in cache. Please re-sync first.")
 
-    # Use provided values directly (no re-parsing)
+    # Use provided values directly
     final_vendor = vendor
     final_date = invoice_date
-    final_amount = payment.amount  # Keep existing amount from database
+
+    # Re-parse PDF to get the freshly extracted amount (WITH VAT), payment_type, vs, iban
+    final_amount = payment.amount  # Default to existing
+    detected_payment_type = None
+    detected_vs = None
+    detected_iban = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(cache.content)
+            tmp_path = Path(tmp.name)
+        try:
+            invoice = parse_uploaded_pdf(tmp_path)
+            if invoice:
+                if invoice.amount:
+                    final_amount = invoice.amount
+                detected_payment_type = invoice.payment_type
+                detected_vs = invoice.vs
+                detected_iban = getattr(invoice, 'iban', None)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except Exception:
+        pass  # Keep existing amount on parse failure
 
     # Generate new filename
     vendor_slug = slugify_vendor(final_vendor)
 
-    # Determine payment type: use provided value, or extract from existing filename
+    # Determine payment type: use provided value, then detected (from IBAN/VS), then existing filename
     final_payment_type = payment_type  # Use provided value if given
+    if not final_payment_type and detected_payment_type:
+        final_payment_type = detected_payment_type  # Use detected from PDF content
     if not final_payment_type and payment.filename:
         # Try to extract payment type from existing filename
         parts = payment.filename.split("_")
@@ -1424,6 +1451,15 @@ async def rename_invoice_file(
     payment.filename = new_filename
     payment.vendor = final_vendor
     payment.amount = final_amount
+    payment.payment_type = final_payment_type
+    payment.variable_symbol = detected_vs
+    payment.iban = detected_iban
+    # Update invoice_date from the provided value
+    try:
+        from datetime import datetime as dt
+        payment.invoice_date = dt.strptime(invoice_date, "%Y-%m-%d").date() if invoice_date else None
+    except ValueError:
+        pass
 
     # Also update cache filename
     cache.filename = new_filename
@@ -1446,6 +1482,8 @@ async def upload_invoice_to_month(
     year_month: str,
     file: UploadFile = File(...),
     invoice_date: str = Form(...),  # YYYY-MM-DD format for invoice/VAT date
+    vendor: str = Form(None),  # Optional vendor name (from PDF parsing)
+    payment_type: str = Form("card"),  # Payment type: card, wire, sepa-debit, cash, credit-note
     db: Session = Depends(get_db)
 ):
     """Upload a new invoice to a month's Google Drive folder.
@@ -1454,6 +1492,8 @@ async def upload_invoice_to_month(
         year_month: The month to upload to (YYYY-MM format)
         file: PDF file to upload
         invoice_date: The invoice/VAT date (used for filename prefix)
+        vendor: Optional vendor name (parsed from PDF)
+        payment_type: Payment type for filename (card, wire, etc.)
     """
     from datetime import datetime
 
@@ -1510,15 +1550,11 @@ async def upload_invoice_to_month(
     # Read file content
     content = await file.read()
 
-    # Create filename with date prefix: YYYY-MM-DD_originalname.pdf
-    original_filename = file.filename or "invoice.pdf"
-    # Remove .pdf extension if present, then add it back
-    base_name = original_filename[:-4] if original_filename.lower().endswith(".pdf") else original_filename
-    new_filename = f"{inv_date.strftime('%Y-%m-%d')}_{base_name}.pdf"
-
-    # Parse PDF to extract amount and vendor
+    # Parse PDF to extract amount, payment type, VS, IBAN (vendor comes from frontend if provided)
     extracted_amount = None
-    extracted_vendor = None
+    detected_payment_type = None
+    detected_vs = None
+    detected_iban = None
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
         tmp.write(content)
         tmp_path = Path(tmp.name)
@@ -1527,11 +1563,43 @@ async def upload_invoice_to_month(
         invoice = parse_uploaded_pdf(tmp_path)
         if invoice:
             extracted_amount = invoice.amount
-            extracted_vendor = invoice.vendor
+            detected_payment_type = invoice.payment_type
+            detected_vs = invoice.vs
+            detected_iban = getattr(invoice, 'iban', None)
     except Exception:
         pass
     finally:
         tmp_path.unlink(missing_ok=True)
+
+    # Helper to slugify vendor name (same as in rename endpoint)
+    def slugify_vendor(name: str) -> str:
+        import re
+        slug = name.lower()
+        slug = re.sub(r'[^\w\s-]', '', slug)  # Remove special chars
+        slug = re.sub(r'\s+', '-', slug)  # Replace spaces with hyphens
+        slug = re.sub(r'-+', '-', slug)  # Collapse multiple hyphens
+        slug = slug.strip('-')
+        return slug[:20]  # Limit length
+
+    # Generate filename: YYYY-MM-DD-NNN_type_vendor.pdf
+    # Find next available number for this date
+    date_prefix = inv_date.strftime('%Y-%m-%d')
+    existing = db.query(InvoicePayment).filter(
+        InvoicePayment.filename.like(f"{date_prefix}-%")
+    ).all()
+    existing_nums = []
+    import re as regex
+    for p in existing:
+        match = regex.match(rf"{date_prefix}-(\d+)_", p.filename)
+        if match:
+            existing_nums.append(int(match.group(1)))
+    next_num = max(existing_nums, default=0) + 1
+
+    # Use provided vendor or fall back to original filename
+    vendor_slug = slugify_vendor(vendor) if vendor else "unknown"
+    # Use user-provided payment_type if given, else use detected type (from IBAN/VS)
+    ptype = payment_type or detected_payment_type or "card"
+    new_filename = f"{date_prefix}-{next_num:03d}_{ptype}_{vendor_slug}.pdf"
 
     try:
         # Upload to Google Drive
@@ -1547,8 +1615,10 @@ async def upload_invoice_to_month(
         )
         db.add(cache_entry)
 
-        # Create invoice payment record with extracted data (unpaid initially)
+        # Create invoice payment record with provided/extracted data (unpaid initially)
         # Mark as manual upload so sync doesn't override it
+        # Use user-provided payment_type if given, else use detected type
+        actual_payment_type = payment_type or detected_payment_type or "card"
         payment = InvoicePayment(
             invoice_month=year_month,
             gdrive_file_id=gdrive_file_id,
@@ -1556,7 +1626,11 @@ async def upload_invoice_to_month(
             paid_month=None,
             transaction_id=None,
             amount=extracted_amount,
-            vendor=extracted_vendor,
+            vendor=vendor or None,  # Use provided vendor
+            payment_type=actual_payment_type,
+            variable_symbol=detected_vs,
+            iban=detected_iban,
+            invoice_date=inv_date,
             is_manual_upload=True,  # Flag to protect from sync override
         )
         db.add(payment)
@@ -1567,12 +1641,112 @@ async def upload_invoice_to_month(
             "gdrive_file_id": gdrive_file_id,
             "filename": new_filename,
             "amount": str(extracted_amount) if extracted_amount else None,
-            "vendor": extracted_vendor,
+            "vendor": vendor or None,
             "message": f"Invoice uploaded to {year_month}"
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload: {str(e)}")
+
+
+@router.delete("/invoices/{file_id}")
+async def delete_invoice(
+    file_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete an invoice file and all related records.
+
+    Removes:
+    - InvoicePayment records
+    - PDFCache entry
+    - References in MonthlyReconciliation results_json
+    - Optionally from Google Drive (if authenticated)
+    """
+    from web.database.models import PDFCache, MonthlyReconciliation
+
+    # Find all related InvoicePayment records
+    payments = db.query(InvoicePayment).filter(
+        InvoicePayment.gdrive_file_id == file_id
+    ).all()
+
+    if not payments:
+        # Check if it exists in cache at least
+        cache = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+        if not cache:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Get affected months for cleanup
+    affected_months = set(p.invoice_month for p in payments)
+    affected_months.update(p.paid_month for p in payments if p.paid_month)
+
+    # Delete InvoicePayment records
+    for payment in payments:
+        db.delete(payment)
+
+    # Delete PDFCache entry
+    cache = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+    filename = cache.filename if cache else "unknown"
+    if cache:
+        db.delete(cache)
+
+    # Remove from results_json in affected months
+    for year_month in affected_months:
+        month = db.query(MonthlyReconciliation).filter(
+            MonthlyReconciliation.year_month == year_month
+        ).first()
+        if month and month.results_json:
+            results = month.results_json
+            updated = False
+
+            # Remove from matched
+            if "matched" in results:
+                original_len = len(results["matched"])
+                results["matched"] = [
+                    m for m in results["matched"]
+                    if not (m.get("invoice", {}).get("gdrive_file_id") == file_id)
+                ]
+                if len(results["matched"]) != original_len:
+                    updated = True
+
+            # Remove from unmatched_invoices
+            if "unmatched_invoices" in results:
+                original_len = len(results["unmatched_invoices"])
+                results["unmatched_invoices"] = [
+                    inv for inv in results["unmatched_invoices"]
+                    if inv.get("gdrive_file_id") != file_id
+                ]
+                if len(results["unmatched_invoices"]) != original_len:
+                    updated = True
+
+            if updated:
+                month.results_json = results
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(month, "results_json")
+
+    # Delete from Google Drive - REQUIRED (don't leave orphan files)
+    if not _gdrive_service._credentials:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Cannot delete: Not authenticated with Google Drive. Please connect to GDrive first to delete files from the cloud."
+        )
+
+    try:
+        _gdrive_service.delete_file(file_id)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete from Google Drive: {str(e)}. Local records NOT deleted."
+        )
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Deleted invoice {filename}",
+        "affected_months": list(affected_months)
+    }
 
 
 # ===== Settings Endpoints =====

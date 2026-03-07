@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Upload, ExternalLink, Check, Clock, Undo2, Pencil, Link, RefreshCw } from "lucide-react"
+import { Upload, ExternalLink, Check, Clock, Undo2, Pencil, Link, RefreshCw, MoreVertical, Trash2 } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -8,6 +8,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatCurrency, formatDate } from "@/lib/utils"
@@ -46,14 +53,18 @@ export function MatchedTable({ matches, onApprove, isApproving }: MatchedTablePr
             </TableCell>
           </TableRow>
         ) : (
-          matches.map((match) => (
-            <TableRow key={match.transaction.id}>
-              <TableCell>{formatDate(match.transaction.date)}</TableCell>
+          matches.map((match, index) => (
+            <TableRow key={match.transaction?.id || `cash-${index}`}>
+              <TableCell>{match.transaction ? formatDate(match.transaction.date) : (match.invoice?.invoice_date || "-")}</TableCell>
               <TableCell className="font-mono">
-                {formatCurrency(match.transaction.amount, match.transaction.currency)}
+                {match.transaction
+                  ? formatCurrency(match.transaction.amount, match.transaction.currency)
+                  : (match.invoice?.amount ? `€${match.invoice.amount}` : "-")}
               </TableCell>
               <TableCell className="max-w-[200px] truncate">
-                {match.transaction.counter_name || match.transaction.counter_account}
+                {match.transaction
+                  ? (match.transaction.counter_name || match.transaction.counter_account)
+                  : (match.invoice?.payment_type === "cash" ? "Cash Payment" : "-")}
               </TableCell>
               <TableCell className="max-w-[150px] truncate" title={match.invoice?.vendor || ""}>
                 {match.invoice?.vendor || "-"}
@@ -91,11 +102,11 @@ export function MatchedTable({ matches, onApprove, isApproving }: MatchedTablePr
               </TableCell>
               {hasReviewItems && onApprove && (
                 <TableCell>
-                  {match.status === "REVIEW" && (
+                  {match.status === "REVIEW" && match.transaction && (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => onApprove(match.transaction.id)}
+                      onClick={() => onApprove(match.transaction!.id)}
                       disabled={isApproving}
                     >
                       <Check className="h-4 w-4 mr-1" />
@@ -422,11 +433,14 @@ interface FolderInvoicesTableProps {
   isRenaming?: boolean
   onReanalyze?: (fileId: string, vendor?: string, invoiceDate?: string, paymentType?: string) => Promise<void>
   isReanalyzing?: boolean
+  onDelete?: (fileId: string) => Promise<void>
+  isDeleting?: boolean
 }
 
-export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRenaming, onReanalyze, isReanalyzing }: FolderInvoicesTableProps) {
+export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRenaming, onReanalyze, isReanalyzing, onDelete, isDeleting }: FolderInvoicesTableProps) {
   const [renameInvoice, setRenameInvoice] = React.useState<FolderInvoice | null>(null)
   const [reanalyzeInvoice, setReanalyzeInvoice] = React.useState<FolderInvoice | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = React.useState<FolderInvoice | null>(null)
 
   // Helper to detect credit notes from filename
   const isCreditNote = (filename: string) => {
@@ -487,8 +501,41 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
     }
   }
 
+  const handleDelete = async () => {
+    if (onDelete && deleteConfirm) {
+      await onDelete(deleteConfirm.gdrive_file_id)
+      setDeleteConfirm(null)
+    }
+  }
+
   return (
     <>
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-lg p-6 max-w-md shadow-lg">
+            <h3 className="text-lg font-semibold text-destructive">Delete Invoice</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This will permanently delete the invoice from Google Drive and remove all related records.
+            </p>
+            <p className="mt-2 font-mono text-sm bg-muted p-2 rounded truncate">
+              {deleteConfirm.filename}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <RenameInvoiceModal
         invoice={renameInvoice}
         open={renameInvoice !== null}
@@ -551,30 +598,41 @@ export function FolderInvoicesTable({ invoices, formatYearMonth, onRename, isRen
                   "-"
                 )}
               </TableCell>
-              {(onRename || onReanalyze) && (
+              {(onRename || onReanalyze || onDelete) && (
                 <TableCell>
-                  <div className="flex gap-1">
-                    {onReanalyze && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setReanalyzeInvoice(inv)}
-                        title="Re-analyze invoice (re-extract vendor, amount, date)"
-                      >
-                        <RefreshCw className="h-4 w-4" />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm">
+                        <MoreVertical className="h-4 w-4" />
                       </Button>
-                    )}
-                    {onRename && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setRenameInvoice(inv)}
-                        title="Rename invoice"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {onReanalyze && (
+                        <DropdownMenuItem onClick={() => setReanalyzeInvoice(inv)}>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Re-analyze
+                        </DropdownMenuItem>
+                      )}
+                      {onRename && (
+                        <DropdownMenuItem onClick={() => setRenameInvoice(inv)}>
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Rename
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setDeleteConfirm(inv)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               )}
             </TableRow>
