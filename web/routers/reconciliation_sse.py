@@ -1088,6 +1088,36 @@ async def monthly_reconcile_stream(
             yield send_event("progress", {"step": "checking_known", "message": "Checking known transaction rules..."})
             await asyncio.sleep(0.1)
 
+            # Find transactions already matched to previous month invoices (preserve cross-month matches)
+            already_matched_trans_ids = set()
+            existing_matches_data = []
+            paid_invoices = db.query(InvoicePayment).filter(
+                InvoicePayment.paid_month == year_month,
+                InvoicePayment.transaction_id.isnot(None),
+                InvoicePayment.invoice_month != year_month  # Only cross-month matches
+            ).all()
+
+            trans_map = {str(t.id): t for t in transactions}
+            for p in paid_invoices:
+                if str(p.transaction_id) in trans_map:
+                    already_matched_trans_ids.add(str(p.transaction_id))
+                    trans = trans_map[str(p.transaction_id)]
+                    existing_matches_data.append({
+                        "transaction": serialize_transaction(trans),
+                        "invoice": {
+                            "filename": p.filename,
+                            "gdrive_file_id": p.gdrive_file_id,
+                            "amount": str(p.amount) if p.amount else None,
+                            "vendor": p.vendor,
+                            "payment_type": p.payment_type,
+                            "invoice_month": p.invoice_month,
+                        },
+                        "confidence": 1.0,
+                        "confidence_pct": 100,
+                        "status": "OK",
+                        "strategy_scores": {"CrossMonthPayment": 1.0},
+                    })
+
             known_service = KnownTransactionService(db)
             known_transactions = []
             unknown_transactions = []
@@ -1095,6 +1125,9 @@ async def monthly_reconcile_stream(
             income_transactions = []
 
             for trans in transactions:
+                # Skip transactions already matched to previous month invoices
+                if str(trans.id) in already_matched_trans_ids:
+                    continue
                 if trans.is_fee:
                     fee_transactions.append(trans)
                     continue
@@ -1190,15 +1223,18 @@ async def monthly_reconcile_stream(
                     "strategy_scores": {"CashPayment": 1.0},
                 })
 
+            # Merge: existing cross-month matches + new matches + cash invoices
+            all_matched_results = existing_matches_data + matched_results
+
             results = {
-                "matched": matched_results,
+                "matched": all_matched_results,
                 "unmatched": [serialize_transaction(t) for t in unmatched_trans],
                 "unmatched_invoices": [serialize_invoice(inv) for inv in all_unmatched_inv],
                 "known": [
                     {
                         **serialize_transaction(t),
                         "rule_reason": rule.reason,
-                                            }
+                    }
                     for t, rule in known_transactions
                 ],
                 "fees": [serialize_transaction(t) for t in fee_transactions],
@@ -1206,8 +1242,8 @@ async def monthly_reconcile_stream(
             }
 
             month.results_json = results
-            # Count includes both transaction matches and cash invoices
-            month.matched_count = len([m for m in all_matched if m.status == "OK"]) + len(cash_invoices)
+            # Count includes cross-month matches, transaction matches, and cash invoices
+            month.matched_count = len([m for m in all_matched if m.status == "OK"]) + len(cash_invoices) + len(existing_matches_data)
             month.review_count = len([m for m in all_matched if m.status == "REVIEW"])
             month.unmatched_count = len(unmatched_trans)
             month.known_count = len(known_transactions)
