@@ -5,6 +5,7 @@ import json
 import re
 from decimal import Decimal
 from pathlib import Path
+from datetime import date as DateType
 from typing import List, Optional, TypedDict, Union
 
 from openai import OpenAI
@@ -13,6 +14,7 @@ from openai import OpenAI
 class InvoiceData(TypedDict, total=False):
     """Extracted invoice data."""
     amount: Optional[Decimal]
+    date: Optional[DateType]
     vs: Optional[str]
     vendor: Optional[str]
     iban: Optional[str]
@@ -189,6 +191,7 @@ def extract_invoice_data_llm(text: str, model: str = None) -> InvoiceData:
 
 Fields to extract:
 - amount_to_pay: The TOTAL amount INCLUDING VAT/DPH (the gross total, not the net/base amount). Look for "Celkom vrátane DPH", "Total with VAT", "Suma s DPH", "Celková suma", "Grand Total". If you see both with-VAT and without-VAT amounts, ALWAYS use the WITH-VAT amount. Just the number.
+- invoice_date: The date of taxable supply (NOT issue date) in YYYY-MM-DD format. Look for "Dátum zdaniteľného plnenia", "Datum zdanitelneho plnenia", "Tax point date", "Date of supply". If not found, use the invoice issue date ("Dátum vystavenia", "Date of issue").
 - variable_symbol: Payment reference / VS / Variabilný symbol. Digits only, remove any slashes or dashes.
 - vendor_name: Name of the company issuing the invoice (the seller/supplier/Dodávateľ). This is NOT the bank - ignore any bank names in "Bankové spojenie" or payment details section. Look for "Dodávateľ", "Supplier", "From", "Seller".
 - iban: Bank account IBAN for payment.
@@ -227,6 +230,17 @@ JSON response:"""
             try:
                 amt_str = str(data["amount_to_pay"]).replace(",", ".").replace(" ", "")
                 result["amount"] = Decimal(amt_str)
+            except:
+                pass
+
+        # Parse date
+        if data.get("invoice_date"):
+            try:
+                from datetime import datetime
+                date_str = str(data["invoice_date"]).strip()
+                # Try YYYY-MM-DD format
+                parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                result["date"] = parsed_date
             except:
                 pass
 

@@ -187,17 +187,19 @@ export function useInvoice(invoiceId: number | null) {
 export function useUploadInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, vendor, invoiceDate, paymentType }: {
+    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount }: {
       file: File
       vendor?: string
       invoiceDate?: string
       paymentType?: string
+      amount?: string
     }): Promise<Invoice> => {
       const formData = new FormData()
       formData.append('file', file)
       if (vendor) formData.append('vendor', vendor)
       if (invoiceDate) formData.append('invoice_date', invoiceDate)
       if (paymentType) formData.append('payment_type', paymentType)
+      if (amount) formData.append('amount', amount)
 
       const response = await fetch(`${API_BASE}/invoices/upload`, {
         method: 'POST',
@@ -238,6 +240,7 @@ export function useUpdateInvoice() {
   return useMutation({
     mutationFn: ({ invoiceId, ...data }: {
       invoiceId: number
+      filename?: string
       vendor?: string
       amount?: string
       invoice_date?: string
@@ -303,6 +306,25 @@ export function useInvoiceSuggestions(invoiceId: number | null) {
       `/invoices/${invoiceId}/suggestions`
     ),
     enabled: invoiceId !== null,
+  })
+}
+
+export interface ReanalyzeResult {
+  success: boolean
+  extracted: {
+    vendor?: string
+    amount?: string
+    invoice_date?: string
+    payment_type?: string
+    vs?: string
+    iban?: string
+  }
+}
+
+export function useReanalyzeInvoice() {
+  return useMutation({
+    mutationFn: (invoiceId: number) =>
+      fetchJson<ReanalyzeResult>(`/invoices/${invoiceId}/reanalyze`, { method: 'POST' }),
   })
 }
 

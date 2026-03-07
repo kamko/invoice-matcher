@@ -99,12 +99,51 @@ def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
     return _invoice_to_response(invoice)
 
 
+@router.post("/analyze")
+async def analyze_pdf(file: UploadFile = File(...)):
+    """Analyze a PDF without saving - returns extracted data for preview."""
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    content = await file.read()
+
+    import os
+    temp_dir = tempfile.mkdtemp()
+    tmp_path = Path(temp_dir) / file.filename
+    tmp_path.write_bytes(content)
+
+    try:
+        parsed = parse_uploaded_pdf(tmp_path)
+        return {
+            "success": True,
+            "extracted": {
+                "vendor": parsed.get('vendor'),
+                "amount": str(parsed['amount']) if parsed.get('amount') else None,
+                "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,
+                "payment_type": parsed.get('payment_type'),
+                "vs": parsed.get('vs'),
+                "iban": parsed.get('iban'),
+            }
+        }
+    except ValueError as e:
+        # Return partial data even on error
+        return {
+            "success": False,
+            "error": str(e),
+            "extracted": {}
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+        os.rmdir(temp_dir)
+
+
 @router.post("/upload", response_model=InvoiceResponse)
 async def upload_invoice(
     file: UploadFile = File(...),
     vendor: Optional[str] = Form(None),
     invoice_date: Optional[str] = Form(None),
     payment_type: Optional[str] = Form(None),
+    amount: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     """Upload a PDF invoice and extract data."""
@@ -139,9 +178,13 @@ async def upload_invoice(
             raise HTTPException(status_code=400, detail="Could not determine invoice date")
 
         final_type = payment_type or parsed.get('payment_type', 'card')
-        amount = parsed.get('amount')
-        if amount and not isinstance(amount, Decimal):
-            amount = Decimal(str(amount))
+        # Use provided amount or fall back to parsed
+        final_amount = None
+        if amount:
+            final_amount = Decimal(amount)
+        elif parsed.get('amount'):
+            parsed_amount = parsed.get('amount')
+            final_amount = Decimal(str(parsed_amount)) if not isinstance(parsed_amount, Decimal) else parsed_amount
 
         # Create invoice record
         invoice = Invoice(
@@ -149,7 +192,7 @@ async def upload_invoice(
             receipt_index=0,
             filename=file.filename,
             vendor=final_vendor,
-            amount=amount,
+            amount=final_amount,
             invoice_date=final_date,
             payment_type=final_type,
             vs=parsed.get('vs'),
@@ -363,6 +406,50 @@ def unmatch_invoice(invoice_id: int, db: Session = Depends(get_db)):
         return _invoice_to_response(invoice)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{invoice_id}/reanalyze")
+def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    """Re-parse the PDF and return extracted data (does not update the invoice)."""
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    if not invoice.gdrive_file_id:
+        raise HTTPException(status_code=400, detail="No PDF available for reanalysis")
+
+    # Get PDF from cache
+    cache = db.query(PDFCache).filter(
+        PDFCache.gdrive_file_id == invoice.gdrive_file_id
+    ).first()
+
+    if not cache:
+        raise HTTPException(status_code=404, detail="PDF not in cache - import from GDrive first")
+
+    # Parse the PDF with original filename for date extraction
+    import os
+    temp_dir = tempfile.mkdtemp()
+    tmp_path = Path(temp_dir) / invoice.filename
+    tmp_path.write_bytes(cache.content)
+
+    try:
+        parsed = parse_uploaded_pdf(tmp_path)
+        return {
+            "success": True,
+            "extracted": {
+                "vendor": parsed.get('vendor'),
+                "amount": str(parsed['amount']) if parsed.get('amount') else None,
+                "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,
+                "payment_type": parsed.get('payment_type'),
+                "vs": parsed.get('vs'),
+                "iban": parsed.get('iban'),
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+        os.rmdir(temp_dir)
 
 
 @router.get("/{invoice_id}/suggestions", response_model=InvoiceSuggestionsResponse)

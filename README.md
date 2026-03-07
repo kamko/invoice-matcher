@@ -1,153 +1,116 @@
 # Invoice Matcher
 
-Automatically reconcile bank statements with invoice PDFs. Matches transactions to invoices using weighted scoring based on amount, vendor name, date proximity, and variable symbol.
+Match bank transactions with invoice PDFs. Simple 1:1 matching with automatic learning.
 
 ## Features
 
-- **Web Application** with month-based reconciliation
-- **Google Drive Integration** - fetch invoice PDFs directly from Drive
-- **Fio Bank API** - fetch transactions directly from Fio Bank
-- **E-kasa Receipt Parsing** - extract data from scanned Slovak receipts via QR code
-- Extract data from invoice PDFs (amount, VS, dates)
-- Smart matching with configurable confidence thresholds
-- Mark transactions as "known" (recurring payments, loans, etc.)
-- Upload PDFs for unmatched transactions
-- Real-time progress updates during sync
+- **Flat Data Model** - Invoices and transactions as independent tables with 1:1 matching
+- **Google Drive Integration** - Import invoice PDFs from Drive, rename files in-place
+- **Fio Bank API** - Fetch transactions directly from Fio Bank
+- **LLM-Powered Parsing** - Extract vendor, amount, date, VS, IBAN from PDFs using OpenRouter
+- **E-kasa Receipt Parsing** - Extract data from Slovak receipts via QR code
+- **Auto-Matching** - Match by VS, IBAN+amount, or learned vendor aliases
+- **Known Transaction Rules** - Auto-skip recurring fees and known payments
+- **Real-time SSE Updates** - Live progress during sync operations
 
 ## Quick Start
-
-### Docker (Recommended)
-
-```bash
-# Create .env file with Google OAuth credentials (optional)
-echo "GOOGLE_CLIENT_ID=your-client-id" > .env
-echo "GOOGLE_CLIENT_SECRET=your-secret" >> .env
-
-# Start the application
-docker compose up -d
-```
-
-Open http://localhost:8000 in your browser.
-
-Data is persisted in a Docker volume (`invoice-data`).
 
 ### Development Setup
 
 ```bash
 # Backend
+cd fa
 uv sync
-
-# Frontend
-cd frontend && npm install
+cp .env.example .env  # Configure API keys
 
 # Start backend (port 8000)
-uv run uvicorn web.main:app --reload
+uv run uvicorn web.main:app --reload --port 8000
 
-# Start frontend (port 5173) - in another terminal
-cd frontend && npm run dev
+# Frontend (in another terminal)
+cd frontend && npm install
+npm run dev  # Port 5173
 ```
 
-For Google Drive integration, set up OAuth credentials in Google Cloud Console.
+### Environment Variables
 
-## Web Application
+```env
+# Google Drive OAuth (optional)
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-secret
 
-### Home Page
-
-- **Settings** - Configure Fio Bank API token and connect Google Drive
-- **Sync Month** - Select a month and invoice folder, then sync
-- **Monthly Reports** - View existing reconciliation results
-
-### Sync Flow
-
-1. Select month (e.g., "February 2026")
-2. Select Google Drive folder containing invoices for that month
-3. Click "Sync" - progress toast shows real-time updates:
-   - Fetching transactions from Fio Bank
-   - Downloading invoices from Google Drive
-   - Checking known transaction rules
-   - Matching transactions with invoices
-   - Saving results
-4. View report with matched/unmatched transactions
-
-### Report Features
-
-- **Unmatched Tab** - Transactions without matching invoices
-  - Upload invoice PDF to match (with amount validation)
-  - Mark as "known" (recurring payments, subscriptions, etc.)
-- **Matched Tab** - Transactions matched with invoices
-  - Direct links to invoice PDFs in Google Drive
-- **Known Tab** - Transactions matched by known rules (shows rule reason)
-- **Fees Tab** - Bank fees
-- **Income Tab** - Incoming transactions
-
-Month list shows completion status - green checkmark when all transactions are matched.
-
-### Known Transaction Rules
-
-Create rules to automatically recognize recurring transactions:
-- **Note Pattern** - Match by regex pattern in transaction note
-- **Vendor Pattern** - Match by vendor name pattern
-- **Exact** - Match exact amount and account
-
-## CLI Usage
-
-The CLI is still available for quick reconciliation:
-
-```bash
-# From Fio Bank API
-uv run python reconcile.py --api --from 2026-02-01 --to 2026-02-28 invoices/ -o report.html
-
-# From CSV file
-uv run python reconcile.py bank_statement.csv invoices/ -o report.html
+# LLM for invoice parsing (optional but recommended)
+OPENROUTER_API_KEY=your-key
+OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 ```
 
-**Note**: Fio API has a rate limit of one request per 30 seconds per token.
+## Pages
 
-## Matching Strategy
+### Dashboard (`/`)
+- Summary stats: unmatched transactions/invoices, matched this month
+- Quick actions: Fetch transactions, Import from GDrive
 
-| Strategy | Weight | Description |
-|----------|--------|-------------|
-| Amount | 40% | Exact or near-exact match (5 cent tolerance) |
-| Vendor | 25% | Fuzzy name matching |
-| Date | 20% | Invoice date near/before transaction |
-| VS | 15% | Variable Symbol match (wire transfers) |
+### Transactions (`/transactions`)
+- List with filters: month, status (unmatched/matched/known/skipped), type (expense/income/fee)
+- Match to invoice, skip with reason, or create known rule
+- View suggested invoice matches
 
-### Confidence Thresholds
+### Invoices (`/invoices`)
+- List with filters: month, status (unmatched/matched/exported)
+- Upload PDF with drag & drop, auto-analyze to prefill fields
+- Edit with re-analyze, auto-generated filename preview
+- Match to transaction with suggestions
 
-- **>= 70%**: High confidence match (OK)
-- **30-70%**: Needs manual review (REVIEW)
-- **< 30%**: No match
+### Settings (`/settings`)
+- Fio Bank API token (stored in browser localStorage)
+- Google Drive connection (OAuth flow)
+- Invoice folder picker
+- LLM configuration display
 
-## Invoice Naming Convention
+## Matching Logic
+
+### Tier 1: Deterministic (auto-match)
+- **VS Match**: Wire transfer with matching variable symbol
+- **IBAN + Amount**: Wire transfer with matching IBAN and exact amount
+
+### Tier 2: Learned (auto-match)
+- **Vendor Alias**: Card payment where transaction vendor matches a learned alias
+
+### Tier 3: Suggestions (manual)
+- Ranked by: amount similarity, date proximity, vendor similarity
+
+## Invoice Filename Convention
 
 ```
-YYYY-MM-DD-NNN_type_vendor.pdf
+YYYY-MM-DD-NNN_type_vendor-slug.pdf
 ```
 
-- `YYYY-MM-DD`: Invoice date
-- `NNN`: Sequence number
-- `type`: `card` or `wire`
-- `vendor`: Vendor identifier
+- `YYYY-MM-DD`: Invoice date (date of taxable supply)
+- `NNN`: Sequence number for that day
+- `type`: `card`, `wire`, `cash`, `sepa-debit`
+- `vendor-slug`: Lowercase, hyphenated vendor name
 
 Examples:
-- `2026-02-03-001_card_hetzner.pdf`
-- `2026-02-14-001_wire_efiia.pdf`
+- `2026-03-07-001_card_obi.pdf`
+- `2026-02-14-001_wire_e-fiia-sro.pdf`
 
-## E-kasa Receipt Support
+## Data Model
 
-Scanned Slovak receipts (e-kasa) are automatically parsed:
+### Invoices
+- Imported from GDrive or uploaded manually
+- Fields: filename, vendor, amount, invoice_date, payment_type, vs, iban
+- Status: unmatched, matched, cash, exported
+- 1:1 link to transaction via `transaction_id`
 
-1. QR code is extracted from the scanned PDF using OpenCV
-2. Receipt ID (format: `O-XXXX...`) is decoded from the QR
-3. Full receipt data is fetched from the Slovak Financial Administration API
+### Transactions
+- Fetched from Fio Bank API
+- Fields: date, amount, counter_account, counter_name, vs, note, type
+- Status: unmatched, matched, known, skipped
+- Linked to known_transaction rule if auto-matched
 
-Extracted data includes:
-- **Vendor name** (ICO, DIC)
-- **Total amount**
-- **Issue date and time**
-- **Line items**
-
-This enables matching of cash receipts that would otherwise be difficult to parse via OCR.
+### Known Transactions
+- Rules for auto-skipping recurring payments
+- Types: exact, pattern, vendor, note, account
+- Example: Skip all "Dan - preddavok" tax payments
 
 ## License
 

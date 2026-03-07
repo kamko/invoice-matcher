@@ -26,6 +26,7 @@ class InvoiceCreate(InvoiceBase):
 
 class InvoiceUpdate(BaseModel):
     """Schema for updating an invoice."""
+    filename: Optional[str] = None
     vendor: Optional[str] = None
     amount: Optional[Decimal] = None
     invoice_date: Optional[date] = None
