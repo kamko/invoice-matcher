@@ -657,18 +657,30 @@ async def fio_refresh_stream(
             # Step 5: Save results - MERGE with existing matches for already-paid invoices
             yield send_event("progress", {"step": "saving", "message": "Saving results..."})
 
-            # Serialize new matches
-            new_matched = [
-                {
+            # Get approved invoice-transaction pairs to preserve their status
+            approved_pairs = set()
+            approved_payments = db.query(InvoicePayment).filter(
+                InvoicePayment.paid_month == year_month,
+                InvoicePayment.is_approved == True
+            ).all()
+            for p in approved_payments:
+                if p.gdrive_file_id and p.transaction_id:
+                    approved_pairs.add((p.gdrive_file_id, str(p.transaction_id)))
+
+            # Serialize new matches, preserving approved status
+            new_matched = []
+            for m in matched:
+                gdrive_id = m.invoice.gdrive_file_id if m.invoice else None
+                trans_id = str(m.transaction.id) if m.transaction else None
+                is_approved = (gdrive_id, trans_id) in approved_pairs if gdrive_id and trans_id else False
+                new_matched.append({
                     "transaction": serialize_transaction(m.transaction),
                     "invoice": serialize_invoice(m.invoice) if m.invoice else None,
                     "confidence": m.confidence,
                     "confidence_pct": m.confidence_pct,
-                    "status": m.status,
+                    "status": "OK" if is_approved else m.status,  # Preserve approval
                     "strategy_scores": m.strategy_scores,
-                }
-                for m in matched
-            ]
+                })
 
             # Merge: existing matches (from InvoicePayment) + new matches
             all_matched = existing_matches_data + new_matched
@@ -1200,18 +1212,31 @@ async def monthly_reconcile_stream(
             # Step 5: Save results
             yield send_event("progress", {"step": "saving", "message": "Saving results..."})
 
+            # Get approved invoice-transaction pairs to preserve their status
+            approved_pairs = set()
+            approved_payments = db.query(InvoicePayment).filter(
+                InvoicePayment.paid_month == year_month,
+                InvoicePayment.is_approved == True
+            ).all()
+            for p in approved_payments:
+                if p.gdrive_file_id and p.transaction_id:
+                    approved_pairs.add((p.gdrive_file_id, str(p.transaction_id)))
+
             # Build matched results - include both transaction matches and cash invoices
-            matched_results = [
-                {
+            # Preserve approved status for previously approved matches
+            matched_results = []
+            for m in all_matched:
+                gdrive_id = m.invoice.gdrive_file_id if m.invoice else None
+                trans_id = str(m.transaction.id) if m.transaction else None
+                is_approved = (gdrive_id, trans_id) in approved_pairs if gdrive_id and trans_id else False
+                matched_results.append({
                     "transaction": serialize_transaction(m.transaction),
                     "invoice": serialize_invoice(m.invoice) if m.invoice else None,
                     "confidence": m.confidence,
                     "confidence_pct": m.confidence_pct,
-                    "status": m.status,
+                    "status": "OK" if is_approved else m.status,  # Preserve approval
                     "strategy_scores": m.strategy_scores,
-                }
-                for m in all_matched
-            ]
+                })
             # Add cash invoices as matched (no transaction needed)
             for inv in cash_invoices:
                 matched_results.append({

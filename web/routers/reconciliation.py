@@ -997,6 +997,16 @@ def approve_match(
     if trans_vendor and inv_vendor:
         store_vendor_alias(db, trans_vendor, inv_vendor, "review_approved")
 
+    # Mark the InvoicePayment as approved so it persists through resyncs
+    gdrive_file_id = invoice_data.get("gdrive_file_id")
+    if gdrive_file_id:
+        payment = db.query(InvoicePayment).filter(
+            InvoicePayment.gdrive_file_id == gdrive_file_id,
+            InvoicePayment.transaction_id == transaction_id
+        ).first()
+        if payment:
+            payment.is_approved = True
+
     # Update results
     results["matched"] = matched
     month.results_json = results

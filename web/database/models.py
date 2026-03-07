@@ -153,6 +153,8 @@ class InvoicePayment(Base):
     invoice_date = Column(DateTime, nullable=True)
     # Flag for manually uploaded invoices (protected from sync override)
     is_manual_upload = Column(Boolean, default=False, nullable=False)
+    # Flag for manually approved matches (REVIEW -> OK, preserved during resync)
+    is_approved = Column(Boolean, default=False, nullable=False)
     # When this record was created/updated
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
