@@ -79,6 +79,7 @@ export interface Invoice {
   gdrive_file_id?: string
   is_credit_note?: boolean
   is_cash?: boolean
+  invoice_month?: string  // For cross-month payments
 }
 
 export interface MatchResult {
@@ -147,6 +148,7 @@ export interface MonthData {
   fees: Transaction[]
   income: Transaction[]
   unmatched_invoices: Invoice[]
+  prev_month_paid: MatchResult[]
   error_message?: string
 }
 

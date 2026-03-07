@@ -115,6 +115,8 @@ class MonthResponse(BaseModel):
     income: List[TransactionResponse] = []
     skipped: List[TransactionResponse] = []
     unmatched_invoices: List[Dict[str, Any]] = []
+    # Invoices from previous month paid in this month (cross-month payments)
+    prev_month_paid: List[MatchResultResponse] = []
 
     error_message: Optional[str] = None
 

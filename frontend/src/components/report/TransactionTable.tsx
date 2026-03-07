@@ -26,9 +26,10 @@ interface MatchedTableProps {
   matches: MatchResult[]
   onApprove?: (transactionId: string) => void
   isApproving?: boolean
+  showInvoiceMonth?: boolean
 }
 
-export function MatchedTable({ matches, onApprove, isApproving }: MatchedTableProps) {
+export function MatchedTable({ matches, onApprove, isApproving, showInvoiceMonth }: MatchedTableProps) {
   const hasReviewItems = matches.some(m => m.status === "REVIEW")
 
   return (
@@ -40,6 +41,7 @@ export function MatchedTable({ matches, onApprove, isApproving }: MatchedTablePr
           <TableHead>Counter Party</TableHead>
           <TableHead>Vendor</TableHead>
           <TableHead>Invoice</TableHead>
+          {showInvoiceMonth && <TableHead>Invoice Month</TableHead>}
           <TableHead>Confidence</TableHead>
           <TableHead>Status</TableHead>
           {hasReviewItems && onApprove && <TableHead>Actions</TableHead>}
@@ -84,6 +86,11 @@ export function MatchedTable({ matches, onApprove, isApproving }: MatchedTablePr
                   match.invoice?.filename || "-"
                 )}
               </TableCell>
+              {showInvoiceMonth && (
+                <TableCell className="font-mono text-muted-foreground">
+                  {match.invoice?.invoice_month || "-"}
+                </TableCell>
+              )}
               <TableCell>
                 <span className="font-mono">{match.confidence_pct}%</span>
               </TableCell>

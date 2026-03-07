@@ -264,6 +264,9 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
             {(month.matched?.filter(m => m.status === 'REVIEW').length || 0) > 0 &&
               ` + ${month.matched?.filter(m => m.status === 'REVIEW').length} review`})
           </TabsTrigger>
+          <TabsTrigger value="prev-month-paid">
+            Prev Month ({month.prev_month_paid?.length || 0})
+          </TabsTrigger>
           <TabsTrigger value="known">
             Known ({(month.known?.length || 0) + (month.skipped?.length || 0)})
           </TabsTrigger>
@@ -293,6 +296,15 @@ export function MonthReportPage({ yearMonth }: MonthReportPageProps) {
             matches={month.matched || []}
             onApprove={handleApproveMatch}
             isApproving={approveMatch.isPending}
+          />
+        </TabsContent>
+
+        <TabsContent value="prev-month-paid" className="border rounded-lg">
+          <MatchedTable
+            matches={month.prev_month_paid || []}
+            onApprove={handleApproveMatch}
+            isApproving={approveMatch.isPending}
+            showInvoiceMonth={true}
           />
         </TabsContent>
 

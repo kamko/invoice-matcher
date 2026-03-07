@@ -644,6 +644,46 @@ def get_month(year_month: str, db: Session = Depends(get_db)):
 
     results = service.get_month_results(month)
 
+    # Get invoices from previous month paid in this month
+    def get_prev_month(ym: str) -> str:
+        y, m = map(int, ym.split("-"))
+        if m == 1:
+            return f"{y-1}-12"
+        return f"{y}-{m-1:02d}"
+
+    prev_month = get_prev_month(year_month)
+    prev_month_paid = []
+
+    # Query InvoicePayment for invoices from prev month paid in current month
+    prev_payments = db.query(InvoicePayment).filter(
+        InvoicePayment.invoice_month == prev_month,
+        InvoicePayment.paid_month == year_month,
+        InvoicePayment.transaction_id.isnot(None),
+        InvoicePayment.transaction_id != "CASH"
+    ).all()
+
+    # Get transactions for these payments
+    if prev_payments and month.transactions_json:
+        trans_map = {str(t["id"]): t for t in month.transactions_json}
+        for p in prev_payments:
+            trans_data = trans_map.get(str(p.transaction_id))
+            if trans_data:
+                prev_month_paid.append({
+                    "transaction": trans_data,
+                    "invoice": {
+                        "filename": p.filename,
+                        "gdrive_file_id": p.gdrive_file_id,
+                        "amount": str(p.amount) if p.amount else None,
+                        "vendor": p.vendor,
+                        "payment_type": p.payment_type,
+                        "invoice_month": p.invoice_month,
+                    },
+                    "confidence": 1.0,
+                    "confidence_pct": 100,
+                    "status": "OK",
+                    "strategy_scores": {"CrossMonthPayment": 1.0},
+                })
+
     skipped = results.get("skipped", [])
     return MonthResponse(
         year_month=month.year_month,
@@ -664,6 +704,7 @@ def get_month(year_month: str, db: Session = Depends(get_db)):
         income=results.get("income", []),
         skipped=skipped,
         unmatched_invoices=results.get("unmatched_invoices", []),
+        prev_month_paid=prev_month_paid,
         error_message=month.error_message,
     )
 
