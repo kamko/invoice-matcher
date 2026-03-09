@@ -193,7 +193,7 @@ export function useCopyToGDrive() {
       folderId: string
       markExported: boolean
     }) =>
-      fetchJson<{ success: boolean; copied: number; total: number; errors: string[] }>(
+      fetchJson<{ success: boolean; copied: number; skipped: number; total: number; errors: string[] }>(
         `/export/${yearMonth}/copy-to-gdrive?folder_id=${encodeURIComponent(folderId)}&mark_exported=${markExported}`,
         { method: 'POST' }
       ),

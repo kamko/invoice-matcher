@@ -319,10 +319,22 @@ def copy_to_accountant_folder(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create month folder: {e}")
 
+    # Get existing files in target folder to avoid duplicates
+    try:
+        existing_files = set(_gdrive_service.list_files_in_folder(target_subfolder_id))
+    except Exception:
+        existing_files = set()
+
     copied = 0
+    skipped = 0
     errors = []
 
     for invoice in invoices:
+        # Skip if file already exists
+        if invoice.filename in existing_files:
+            skipped += 1
+            continue
+
         try:
             _gdrive_service.copy_file(
                 invoice.gdrive_file_id,
@@ -341,6 +353,7 @@ def copy_to_accountant_folder(
     return {
         "success": True,
         "copied": copied,
+        "skipped": skipped,
         "total": len(invoices),
         "errors": errors,
         "target_folder": month_folder_name,

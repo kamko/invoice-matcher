@@ -40,6 +40,8 @@ export function ExportPage() {
       })
       if (result.errors?.length > 0) {
         showSuccess(`Copied ${result.copied}/${result.total} invoices (${result.errors.length} errors)`)
+      } else if (result.skipped > 0) {
+        showSuccess(`Copied ${result.copied} invoices, ${result.skipped} already existed`)
       } else {
         showSuccess(`Copied ${result.copied} invoices to accountant folder`)
       }
@@ -102,7 +104,6 @@ export function ExportPage() {
                 <Button
                   onClick={handleCopyToAccountant}
                   disabled={!selectedMonth || isCopying}
-                  variant="outline"
                   className="w-full"
                 >
                   {isCopying ? (
