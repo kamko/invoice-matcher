@@ -163,8 +163,24 @@ export function useMonthStats(yearMonth: string | null) {
       year_month: string
       invoices: { total: number; unmatched: number; matched: number; exported: number }
       transactions: { total: number; unmatched: number; matched: number; known: number; skipped: number }
+      amounts: { income: number; expenses: number; fees: number; net: number }
     }>(`/stats/${yearMonth}`),
     enabled: !!yearMonth,
+  })
+}
+
+export interface MonthlySummary {
+  month: string
+  income: number
+  expenses: number
+  fees: number
+  net: number
+}
+
+export function useMonthlySummary() {
+  return useQuery({
+    queryKey: ['monthly-summary'],
+    queryFn: () => fetchJson<{ months: MonthlySummary[] }>('/monthly-summary'),
   })
 }
 

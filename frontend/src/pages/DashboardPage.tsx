@@ -1,14 +1,30 @@
 import { Link } from 'wouter'
-import { useDashboard, useFetchTransactions, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useFetchTransactions, useMonthlySummary, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useState } from 'react'
-import { FileText, CreditCard, CheckCircle, Download, RefreshCw } from 'lucide-react'
+import { FileText, CreditCard, CheckCircle, Download, RefreshCw, TrendingUp } from 'lucide-react'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table'
 
 const FIO_TOKEN_KEY = 'fio_token'
 
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat('sk-SK', {
+    style: 'currency',
+    currency: 'EUR',
+  }).format(amount)
+}
+
 export function DashboardPage() {
   const { data: dashboard, isLoading, refetch } = useDashboard()
+  const { data: monthlySummary } = useMonthlySummary()
   const fetchTransactions = useFetchTransactions()
   const [isFetching, setIsFetching] = useState(false)
 
@@ -136,30 +152,57 @@ export function DashboardPage() {
         </Link>
       </div>
 
-      {/* Available Months */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Available Months</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {dashboard?.available_months?.slice(0, 6).map((month: string) => (
-                <Link key={month} href={`/transactions?month=${month}`}>
-                  <Button variant="outline" size="sm">
-                    {month}
-                  </Button>
-                </Link>
-              ))}
-              {(!dashboard?.available_months || dashboard.available_months.length === 0) && (
-                <p className="text-muted-foreground text-sm">
-                  No data yet. Fetch transactions to get started.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Monthly Summary */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5" />
+            Monthly Summary
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {monthlySummary?.months && monthlySummary.months.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Month</TableHead>
+                  <TableHead className="text-right">Income</TableHead>
+                  <TableHead className="text-right">Expenses</TableHead>
+                  <TableHead className="text-right">Fees</TableHead>
+                  <TableHead className="text-right">Net</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {monthlySummary.months.slice(0, 6).map((m) => (
+                  <TableRow key={m.month}>
+                    <TableCell>
+                      <Link href={`/transactions?month=${m.month}`} className="hover:underline font-medium">
+                        {m.month}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right text-green-600">
+                      {m.income > 0 ? '+' : ''}{formatCurrency(m.income)}
+                    </TableCell>
+                    <TableCell className="text-right text-red-600">
+                      {formatCurrency(m.expenses)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {formatCurrency(m.fees)}
+                    </TableCell>
+                    <TableCell className={`text-right font-semibold ${m.net >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {m.net >= 0 ? '+' : ''}{formatCurrency(m.net)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              No data yet. Fetch transactions to get started.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats */}
       <Card>

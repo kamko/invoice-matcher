@@ -199,6 +199,11 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
         Transaction.date <= end_date
     ).all()
 
+    # Calculate amounts
+    income_total = sum(float(t.amount) for t in transactions if t.type == 'income')
+    expense_total = sum(float(t.amount) for t in transactions if t.type == 'expense')
+    fee_total = sum(float(t.amount) for t in transactions if t.type == 'fee')
+
     transaction_stats = {
         "total": len(transactions),
         "unmatched": sum(1 for t in transactions if t.status == 'unmatched'),
@@ -210,11 +215,55 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
         "fees": sum(1 for t in transactions if t.type == 'fee'),
     }
 
+    # Amount summary
+    amounts = {
+        "income": round(income_total, 2),
+        "expenses": round(expense_total, 2),
+        "fees": round(fee_total, 2),
+        "net": round(income_total + expense_total + fee_total, 2),  # expenses and fees are negative
+    }
+
     return {
         "year_month": year_month,
         "invoices": invoice_stats,
         "transactions": transaction_stats,
+        "amounts": amounts,
     }
+
+
+@router.get("/monthly-summary")
+def get_monthly_summary(db: Session = Depends(get_db)):
+    """Get income/expense summary for all months."""
+    # Get all transactions grouped by month
+    transactions = db.query(Transaction).all()
+
+    # Group by month
+    monthly_data = {}
+    for t in transactions:
+        month_key = t.date.strftime('%Y-%m')
+        if month_key not in monthly_data:
+            monthly_data[month_key] = {"income": 0, "expenses": 0, "fees": 0}
+
+        amount = float(t.amount)
+        if t.type == 'income':
+            monthly_data[month_key]["income"] += amount
+        elif t.type == 'expense':
+            monthly_data[month_key]["expenses"] += amount
+        elif t.type == 'fee':
+            monthly_data[month_key]["fees"] += amount
+
+    # Convert to list and calculate net
+    result = []
+    for month, data in sorted(monthly_data.items(), reverse=True):
+        result.append({
+            "month": month,
+            "income": round(data["income"], 2),
+            "expenses": round(data["expenses"], 2),
+            "fees": round(data["fees"], 2),
+            "net": round(data["income"] + data["expenses"] + data["fees"], 2),
+        })
+
+    return {"months": result}
 
 
 @router.post("/export/{year_month}/copy-to-gdrive")
