@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["models", "parsers", "matching", "reports"]
+packages = ["parsers", "web"]
 
 [tool.hatch.build.targets.wheel.sources]
 "" = ""

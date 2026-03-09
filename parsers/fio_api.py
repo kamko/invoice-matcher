@@ -1,20 +1,35 @@
 """Fio Bank API client for fetching transactions directly."""
 
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
 from fiobank import FioBank, ThrottlingError
 
-from models.transaction import Transaction
+
+@dataclass
+class RawTransaction:
+    """Raw transaction data from Fio Bank API."""
+    id: str
+    date: date
+    amount: Decimal
+    currency: str
+    counter_account: str
+    counter_name: str
+    vs: str
+    note: str
+    raw_type: str
+    is_card: bool = False
+    is_fee: bool = False
 
 
 def fetch_transactions_from_api(
     token: str,
     from_date: date,
     to_date: date,
-) -> List[Transaction]:
+) -> List[RawTransaction]:
     """
     Fetch transactions directly from Fio Bank API.
 
@@ -46,7 +61,7 @@ def fetch_transactions_from_api(
     return transactions
 
 
-def _convert_api_transaction(trans: dict) -> Optional[Transaction]:
+def _convert_api_transaction(trans: dict) -> Optional[RawTransaction]:
     """Convert Fio API transaction dict to Transaction model."""
     # Get transaction date
     trans_date = trans.get("date")
@@ -81,7 +96,10 @@ def _convert_api_transaction(trans: dict) -> Optional[Transaction]:
     # Get counter account - prefer account_number_full, fallback to account_number (for IBANs)
     counter_account = trans.get("account_number_full") or trans.get("account_number") or ""
 
-    return Transaction(
+    is_card = transaction_type == "card"
+    is_fee = transaction_type == "fee"
+
+    return RawTransaction(
         id=str(trans.get("transaction_id", "")),
         date=trans_date,
         amount=amount,
@@ -90,8 +108,9 @@ def _convert_api_transaction(trans: dict) -> Optional[Transaction]:
         counter_name=trans.get("account_name") or trans.get("bank_name") or "",
         vs=trans.get("variable_symbol", "") or "",
         note=note,
-        transaction_type=transaction_type,
         raw_type=trans_type_raw,
+        is_card=is_card,
+        is_fee=is_fee,
     )
 
 

@@ -4,14 +4,14 @@ Match bank transactions with invoice PDFs. Simple 1:1 matching with automatic le
 
 ## Features
 
-- **Flat Data Model** - Invoices and transactions as independent tables with 1:1 matching
-- **Google Drive Integration** - Import invoice PDFs from Drive, rename files in-place
+- **Google Drive Integration** - Import invoice PDFs from Drive, auto-organize by month
 - **Fio Bank API** - Fetch transactions directly from Fio Bank
 - **LLM-Powered Parsing** - Extract vendor, amount, date, VS, IBAN from PDFs using OpenRouter
 - **E-kasa Receipt Parsing** - Extract data from Slovak receipts via QR code
 - **Auto-Matching** - Match by VS, IBAN+amount, or learned vendor aliases
 - **Known Transaction Rules** - Auto-skip recurring fees and known payments
-- **Real-time SSE Updates** - Live progress during sync operations
+- **Export to Accountant** - Copy matched invoices to shared folder with duplicate detection
+- **Monthly Summary** - Track income, expenses, fees, and cash by month
 
 ## Quick Start
 
@@ -39,28 +39,13 @@ Access at http://localhost:8000
 
 ```bash
 # Backend
-cd fa
 uv sync
 cp .env.example .env  # Configure API keys
-
-# Start backend (port 8000)
 uv run uvicorn web.main:app --reload --port 8000
 
 # Frontend (in another terminal)
 cd frontend && npm install
 npm run dev  # Port 5173
-```
-
-### Environment Variables
-
-```env
-# Google Drive OAuth (optional)
-GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-secret
-
-# LLM for invoice parsing (optional but recommended)
-OPENROUTER_API_KEY=your-key
-OPENROUTER_MODEL=google/gemini-2.0-flash-001
 ```
 
 ### Deployment
@@ -75,38 +60,24 @@ OPENROUTER_MODEL=google/gemini-2.0-flash-001
 
 ## Pages
 
-### Dashboard (`/`)
-- Summary stats: unmatched transactions/invoices, matched this month
-- Quick actions: Fetch transactions, Import from GDrive
-
-### Transactions (`/transactions`)
-- List with filters: month, status (unmatched/matched/known/skipped), type (expense/income/fee)
-- Match to invoice, skip with reason, or create known rule
-- View suggested invoice matches
-
-### Invoices (`/invoices`)
-- List with filters: month, status (unmatched/matched/exported)
-- Upload PDF with drag & drop, auto-analyze to prefill fields
-- Edit with re-analyze, auto-generated filename preview
-- Match to transaction with suggestions
-
-### Settings (`/settings`)
-- Fio Bank API token (stored in browser localStorage)
-- Google Drive connection (OAuth flow)
-- Invoice folder picker
-- LLM configuration display
+- **Dashboard** - Summary stats, monthly income/expense breakdown, fetch transactions
+- **Transactions** - List, filter, match to invoices, skip, create rules
+- **Invoices** - Upload, import from GDrive, edit, match to transactions
+- **Export** - Download ZIP or copy to accountant folder by month
+- **Rules** - Manage known transaction rules for auto-skip
+- **Settings** - Fio token, GDrive connection, folder configuration
 
 ## Matching Logic
 
-### Tier 1: Deterministic (auto-match)
-- **VS Match**: Wire transfer with matching variable symbol
-- **IBAN + Amount**: Wire transfer with matching IBAN and exact amount
+### Auto-Match (Tier 1)
+- **VS Match** - Wire transfer with matching variable symbol
+- **IBAN + Amount** - Wire transfer with matching IBAN and exact amount
 
-### Tier 2: Learned (auto-match)
-- **Vendor Alias**: Card payment where transaction vendor matches a learned alias
+### Learned (Tier 2)
+- **Vendor Alias** - Card payment where transaction vendor matches learned alias
 
-### Tier 3: Suggestions (manual)
-- Ranked by: amount similarity, date proximity, vendor similarity
+### Manual (Tier 3)
+- Suggestions ranked by amount similarity, date proximity, vendor similarity
 
 ## Invoice Filename Convention
 
@@ -114,33 +85,24 @@ OPENROUTER_MODEL=google/gemini-2.0-flash-001
 YYYY-MM-DD-NNN_type_vendor-slug.pdf
 ```
 
-- `YYYY-MM-DD`: Invoice date (date of taxable supply)
-- `NNN`: Sequence number for that day
-- `type`: `card`, `wire`, `cash`, `sepa-debit`
-- `vendor-slug`: Lowercase, hyphenated vendor name
+- `YYYY-MM-DD` - Invoice date
+- `NNN` - Sequence number for that day
+- `type` - `card`, `wire`, `cash`, `sepa-debit`, `cod`
+- `vendor-slug` - Lowercase, hyphenated vendor name
 
-Examples:
-- `2026-03-07-001_card_obi.pdf`
-- `2026-02-14-001_wire_e-fiia-sro.pdf`
+## Project Structure
 
-## Data Model
-
-### Invoices
-- Imported from GDrive or uploaded manually
-- Fields: filename, vendor, amount, invoice_date, payment_type, vs, iban
-- Status: unmatched, matched, cash, exported
-- 1:1 link to transaction via `transaction_id`
-
-### Transactions
-- Fetched from Fio Bank API
-- Fields: date, amount, counter_account, counter_name, vs, note, type
-- Status: unmatched, matched, known, skipped
-- Linked to known_transaction rule if auto-matched
-
-### Known Transactions
-- Rules for auto-skipping recurring payments
-- Types: exact, pattern, vendor, note, account
-- Example: Skip all "Dan - preddavok" tax payments
+```
+├── frontend/          # React + Vite + TailwindCSS
+├── parsers/           # PDF, Fio API, LLM extractors
+├── web/
+│   ├── routers/       # FastAPI endpoints
+│   ├── services/      # Business logic
+│   ├── schemas/       # Pydantic models
+│   └── database/      # SQLAlchemy models
+├── Dockerfile
+└── docker-compose.yml
+```
 
 ## License
 

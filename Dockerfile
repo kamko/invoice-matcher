@@ -27,12 +27,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --no-install-project
 
 # Copy application code
-COPY models/ ./models/
 COPY parsers/ ./parsers/
-COPY matching/ ./matching/
-COPY reports/ ./reports/
 COPY web/ ./web/
-COPY reconcile.py ./
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
