@@ -15,6 +15,26 @@ Match bank transactions with invoice PDFs. Simple 1:1 matching with automatic le
 
 ## Quick Start
 
+### Docker (Recommended)
+
+```bash
+# Create .env file with your credentials
+cat > .env << EOF
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-secret
+OPENROUTER_API_KEY=your-key
+OPENROUTER_MODEL=google/gemini-2.0-flash-001
+EOF
+
+# Run with pre-built image
+docker compose up -d
+
+# Or build locally
+docker compose -f docker-compose.build.yml up -d
+```
+
+Access at http://localhost:8000
+
 ### Development Setup
 
 ```bash
@@ -40,8 +60,18 @@ GOOGLE_CLIENT_SECRET=your-secret
 
 # LLM for invoice parsing (optional but recommended)
 OPENROUTER_API_KEY=your-key
-OPENROUTER_MODEL=google/gemini-2.5-flash-lite
+OPENROUTER_MODEL=google/gemini-2.0-flash-001
 ```
+
+### Deployment
+
+1. Copy `docker-compose.yml` and `.env` to your server
+2. Run:
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+3. Data is persisted in the `invoice-data` volume
 
 ## Pages
 
