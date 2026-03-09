@@ -168,6 +168,7 @@ export function DashboardPage() {
                   <TableHead>Month</TableHead>
                   <TableHead className="text-right">Income</TableHead>
                   <TableHead className="text-right">Expenses</TableHead>
+                  <TableHead className="text-right">Cash</TableHead>
                   <TableHead className="text-right">Fees</TableHead>
                   <TableHead className="text-right">Net</TableHead>
                 </TableRow>
@@ -185,6 +186,9 @@ export function DashboardPage() {
                     </TableCell>
                     <TableCell className="text-right text-red-600">
                       {formatCurrency(m.expenses)}
+                    </TableCell>
+                    <TableCell className="text-right text-orange-600">
+                      {formatCurrency(m.cash)}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {formatCurrency(m.fees)}

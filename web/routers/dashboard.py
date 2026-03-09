@@ -242,7 +242,7 @@ def get_monthly_summary(db: Session = Depends(get_db)):
     for t in transactions:
         month_key = t.date.strftime('%Y-%m')
         if month_key not in monthly_data:
-            monthly_data[month_key] = {"income": 0, "expenses": 0, "fees": 0}
+            monthly_data[month_key] = {"income": 0, "expenses": 0, "fees": 0, "cash": 0}
 
         amount = float(t.amount)
         if t.type == 'income':
@@ -252,6 +252,16 @@ def get_monthly_summary(db: Session = Depends(get_db)):
         elif t.type == 'fee':
             monthly_data[month_key]["fees"] += amount
 
+    # Add cash invoices (no bank transaction)
+    cash_invoices = db.query(Invoice).filter(Invoice.status == 'cash').all()
+    for inv in cash_invoices:
+        if inv.invoice_date and inv.amount:
+            month_key = inv.invoice_date.strftime('%Y-%m')
+            if month_key not in monthly_data:
+                monthly_data[month_key] = {"income": 0, "expenses": 0, "fees": 0, "cash": 0}
+            # Cash invoices are expenses (negative)
+            monthly_data[month_key]["cash"] -= float(inv.amount)
+
     # Convert to list and calculate net
     result = []
     for month, data in sorted(monthly_data.items(), reverse=True):
@@ -260,7 +270,8 @@ def get_monthly_summary(db: Session = Depends(get_db)):
             "income": round(data["income"], 2),
             "expenses": round(data["expenses"], 2),
             "fees": round(data["fees"], 2),
-            "net": round(data["income"] + data["expenses"] + data["fees"], 2),
+            "cash": round(data["cash"], 2),
+            "net": round(data["income"] + data["expenses"] + data["fees"] + data["cash"], 2),
         })
 
     return {"months": result}

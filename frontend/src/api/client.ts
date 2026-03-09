@@ -174,6 +174,7 @@ export interface MonthlySummary {
   income: number
   expenses: number
   fees: number
+  cash: number
   net: number
 }
 
