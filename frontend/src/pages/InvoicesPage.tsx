@@ -322,7 +322,8 @@ export function InvoicesPage() {
     setEditAmount(inv.amount || '')
     setEditCurrency(inv.currency || 'EUR')
     setEditDate(inv.invoice_date || '')
-    setEditPaymentType(inv.payment_type || 'card')
+    const validPaymentTypes = ['card', 'wire', 'cash', 'sepa-debit', 'cod']
+    setEditPaymentType(validPaymentTypes.includes(inv.payment_type || '') ? inv.payment_type! : 'card')
     setEditVs(inv.vs || '')
     setEditIban(inv.iban || '')
     setParsedValues(null) // Reset parsed values
@@ -968,6 +969,7 @@ export function InvoicesPage() {
                     { value: 'wire', label: 'Wire Transfer' },
                     { value: 'cash', label: 'Cash' },
                     { value: 'sepa-debit', label: 'SEPA Direct Debit' },
+                    { value: 'cod', label: 'Cash on Delivery' },
                   ]}
                 />
               </div>
