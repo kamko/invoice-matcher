@@ -16,6 +16,7 @@ class GDriveFolder(BaseModel):
     id: str
     name: str
     parent_id: Optional[str] = None
+    shared: bool = False
 
 
 class GDriveFolderList(BaseModel):

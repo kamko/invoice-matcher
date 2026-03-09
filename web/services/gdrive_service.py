@@ -145,8 +145,13 @@ class GDriveService:
 
         return folders
 
-    def list_all_folders(self) -> List[GDriveFolder]:
-        """List ALL folders in Google Drive (for search/debug)."""
+    def list_all_folders(self, search: Optional[str] = None, include_shared: bool = True) -> List[GDriveFolder]:
+        """List ALL folders in Google Drive (for search).
+
+        Args:
+            search: Optional search term to filter by name
+            include_shared: If True, include folders shared with the user
+        """
         if not GDRIVE_AVAILABLE:
             raise RuntimeError("Google Drive libraries not installed")
 
@@ -155,13 +160,19 @@ class GDriveService:
 
         service = build("drive", "v3", credentials=self._credentials)
 
-        # Get all folders
-        query = "mimeType='application/vnd.google-apps.folder' and trashed=false"
+        # Build query
+        query_parts = ["mimeType='application/vnd.google-apps.folder'", "trashed=false"]
+        if search:
+            # Escape single quotes in search term
+            safe_search = search.replace("'", "\\'")
+            query_parts.append(f"name contains '{safe_search}'")
+
+        query = " and ".join(query_parts)
 
         results = service.files().list(
             q=query,
             pageSize=100,
-            fields="files(id, name, parents)",
+            fields="files(id, name, parents, shared)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         ).execute()
@@ -172,10 +183,116 @@ class GDriveService:
                 id=item["id"],
                 name=item["name"],
                 parent_id=item.get("parents", [None])[0] if item.get("parents") else None,
+                shared=item.get("shared", False),
             ))
 
         folders.sort(key=lambda f: f.name.lower())
         return folders
+
+    def list_shared_folders(self) -> List[GDriveFolder]:
+        """List folders shared with the user."""
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        # Query for folders shared with me
+        query = "mimeType='application/vnd.google-apps.folder' and trashed=false and sharedWithMe=true"
+
+        results = service.files().list(
+            q=query,
+            pageSize=100,
+            fields="files(id, name, parents, shared)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+
+        folders = []
+        for item in results.get("files", []):
+            folders.append(GDriveFolder(
+                id=item["id"],
+                name=item["name"],
+                parent_id=item.get("parents", [None])[0] if item.get("parents") else None,
+                shared=True,
+            ))
+
+        folders.sort(key=lambda f: f.name.lower())
+        return folders
+
+    def get_folder_info(self, folder_id: str) -> Optional[GDriveFolder]:
+        """Get folder info by ID."""
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        try:
+            item = service.files().get(
+                fileId=folder_id,
+                fields="id, name, parents, shared",
+                supportsAllDrives=True,
+            ).execute()
+
+            return GDriveFolder(
+                id=item["id"],
+                name=item["name"],
+                parent_id=item.get("parents", [None])[0] if item.get("parents") else None,
+                shared=item.get("shared", False),
+            )
+        except Exception:
+            return None
+
+    def create_folder(self, parent_id: str, folder_name: str) -> str:
+        """Create a folder in Google Drive.
+
+        Args:
+            parent_id: ID of the parent folder
+            folder_name: Name of the new folder
+
+        Returns:
+            The ID of the created folder
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        file_metadata = {
+            "name": folder_name,
+            "parents": [parent_id],
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+
+        folder = service.files().create(
+            body=file_metadata,
+            fields="id",
+        ).execute()
+
+        return folder.get("id")
+
+    def find_or_create_subfolder(self, parent_id: str, folder_name: str) -> str:
+        """Find a subfolder by name, or create it if it doesn't exist.
+
+        Args:
+            parent_id: ID of the parent folder
+            folder_name: Name of the subfolder (e.g., "202603")
+
+        Returns:
+            The ID of the subfolder
+        """
+        existing = self.find_subfolder(parent_id, folder_name)
+        if existing:
+            return existing.id
+        return self.create_folder(parent_id, folder_name)
 
     def find_subfolder(self, parent_id: str, folder_name: str) -> Optional[GDriveFolder]:
         """Find a subfolder by name within a parent folder.
@@ -215,8 +332,12 @@ class GDriveService:
             )
         return None
 
-    def list_pdfs(self, folder_id: str) -> List[Dict[str, str]]:
-        """List all PDF files in a folder without downloading.
+    def list_pdfs(self, folder_id: str, recursive: bool = True) -> List[Dict[str, str]]:
+        """List all PDF files in a folder (and subfolders if recursive).
+
+        Args:
+            folder_id: Google Drive folder ID
+            recursive: If True, also search in subfolders (like YYYYMM folders)
 
         Returns:
             List of dicts with 'id' and 'name' keys.
@@ -229,15 +350,37 @@ class GDriveService:
 
         service = build("drive", "v3", credentials=self._credentials)
 
-        query = f"'{folder_id}' in parents and mimeType='application/pdf' and trashed=false"
+        all_pdfs = []
 
+        # Get PDFs directly in this folder
+        query = f"'{folder_id}' in parents and mimeType='application/pdf' and trashed=false"
         results = service.files().list(
             q=query,
             pageSize=100,
             fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
+        all_pdfs.extend(results.get("files", []))
 
-        return results.get("files", [])
+        # If recursive, also check subfolders
+        if recursive:
+            # Get subfolders
+            folder_query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            folder_results = service.files().list(
+                q=folder_query,
+                pageSize=100,
+                fields="files(id, name)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute()
+
+            for subfolder in folder_results.get("files", []):
+                # Recursively get PDFs from subfolder (but don't go deeper than 1 level)
+                subfolder_pdfs = self.list_pdfs(subfolder["id"], recursive=False)
+                all_pdfs.extend(subfolder_pdfs)
+
+        return all_pdfs
 
     def download_pdfs(self, folder_id: str, db=None, force_refresh: bool = False) -> Tuple[Path, List[str], Dict[str, str]]:
         """Download all PDFs from a folder, using cache when available.
@@ -382,6 +525,37 @@ class GDriveService:
 
         return [item["name"] for item in results.get("files", [])]
 
+    def copy_file(self, file_id: str, target_folder_id: str, new_name: Optional[str] = None) -> str:
+        """Copy a file to another folder in Google Drive.
+
+        Args:
+            file_id: ID of the file to copy
+            target_folder_id: ID of the destination folder
+            new_name: Optional new name for the copy
+
+        Returns:
+            The ID of the copied file
+        """
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+
+        body = {"parents": [target_folder_id]}
+        if new_name:
+            body["name"] = new_name
+
+        copied_file = service.files().copy(
+            fileId=file_id,
+            body=body,
+            fields="id",
+        ).execute()
+
+        return copied_file.get("id")
+
     def upload_pdf(self, folder_id: str, filename: str, content: bytes) -> str:
         """Upload a PDF file to a Google Drive folder.
 
@@ -463,7 +637,10 @@ class GDriveService:
 
         service = build("drive", "v3", credentials=self._credentials)
 
-        service.files().delete(fileId=file_id).execute()
+        service.files().delete(
+            fileId=file_id,
+            supportsAllDrives=True,
+        ).execute()
 
         return True
 

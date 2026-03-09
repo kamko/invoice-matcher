@@ -47,6 +47,7 @@ export interface Invoice {
   filename: string
   vendor?: string
   amount?: string
+  currency: string  // EUR, USD, CZK, etc.
   invoice_date?: string
   payment_type?: string
   vs?: string
@@ -79,6 +80,7 @@ export interface Transaction {
   status: 'unmatched' | 'matched' | 'known' | 'skipped'
   known_rule_id?: number
   skip_reason?: string
+  extracted_vendor?: string  // LLM-extracted clean vendor name
   fetched_at?: string
   rule_reason?: string
 }
@@ -99,7 +101,13 @@ export interface MatchSuggestion {
   counter_name?: string
   vs?: string
   note?: string
-  score: number
+  extracted_vendor?: string  // Clean vendor (LLM or regex extracted)
+  score: number  // Total 0-100
+  // Score breakdown
+  amount_score: number      // 0-50
+  date_score: number        // 0-30
+  vendor_score: number      // 0-20
+  date_diff_days?: number
 }
 
 export interface InvoiceSuggestion {
@@ -160,6 +168,25 @@ export function useMonthStats(yearMonth: string | null) {
   })
 }
 
+export function useCopyToGDrive() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ yearMonth, folderId, markExported }: {
+      yearMonth: string
+      folderId: string
+      markExported: boolean
+    }) =>
+      fetchJson<{ success: boolean; copied: number; total: number; errors: string[] }>(
+        `/export/${yearMonth}/copy-to-gdrive?folder_id=${encodeURIComponent(folderId)}&mark_exported=${markExported}`,
+        { method: 'POST' }
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
 // ============================================================================
 // Invoice Hooks
 // ============================================================================
@@ -187,15 +214,17 @@ export function useInvoice(invoiceId: number | null) {
 export function useUploadInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount }: {
+    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount, gdriveFolderId }: {
       file: File
       vendor?: string
       invoiceDate?: string
       paymentType?: string
       amount?: string
+      gdriveFolderId: string  // Required - parent folder ID
     }): Promise<Invoice> => {
       const formData = new FormData()
       formData.append('file', file)
+      formData.append('gdrive_folder_id', gdriveFolderId)
       if (vendor) formData.append('vendor', vendor)
       if (invoiceDate) formData.append('invoice_date', invoiceDate)
       if (paymentType) formData.append('payment_type', paymentType)
@@ -235,6 +264,17 @@ export function useImportGDrive() {
   })
 }
 
+export function useImportSubfolders(parentId: string) {
+  return useQuery({
+    queryKey: ['import-subfolders', parentId],
+    queryFn: () =>
+      fetchJson<{ folders: Array<{ id: string; name: string }> }>(
+        `/invoices/import-gdrive/subfolders?folder_id=${parentId}`
+      ),
+    enabled: !!parentId,
+  })
+}
+
 export function useUpdateInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -243,6 +283,7 @@ export function useUpdateInvoice() {
       filename?: string
       vendor?: string
       amount?: string
+      currency?: string
       invoice_date?: string
       payment_type?: string
       vs?: string
@@ -314,6 +355,7 @@ export interface ReanalyzeResult {
   extracted: {
     vendor?: string
     amount?: string
+    currency?: string
     invoice_date?: string
     payment_type?: string
     vs?: string
@@ -559,14 +601,31 @@ export function useGDriveAuthUrl() {
   })
 }
 
-export function useGDriveFolders(parentId: string, showAll = false) {
+export function useGDriveFolderInfo() {
+  return useMutation({
+    mutationFn: (folderId: string) =>
+      fetchJson<{ id: string; name: string; shared?: boolean }>(`/gdrive/folder/${folderId}`),
+  })
+}
+
+export function useGDriveFolders(
+  parentId: string,
+  options: { showAll?: boolean; search?: string; shared?: boolean } = {}
+) {
+  const { showAll = false, search, shared = false } = options
+  const params = new URLSearchParams()
+  params.set('parent_id', parentId)
+  if (showAll) params.set('all', 'true')
+  if (search) params.set('search', search)
+  if (shared) params.set('shared', 'true')
+
   return useQuery({
-    queryKey: ['gdrive-folders', parentId, showAll],
+    queryKey: ['gdrive-folders', parentId, showAll, search, shared],
     queryFn: () =>
-      fetchJson<{ folders: Array<{ id: string; name: string; parent_id?: string }> }>(
-        `/gdrive/folders?parent_id=${parentId}&all=${showAll}`
+      fetchJson<{ folders: Array<{ id: string; name: string; parent_id?: string; shared?: boolean }> }>(
+        `/gdrive/folders?${params.toString()}`
       ),
-    enabled: !!parentId,
+    enabled: !!parentId || !!search || shared,
   })
 }
 

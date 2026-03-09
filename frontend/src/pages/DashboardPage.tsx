@@ -1,19 +1,16 @@
 import { Link } from 'wouter'
-import { useDashboard, useFetchTransactions, useImportGDrive, useSettings, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useFetchTransactions, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useState } from 'react'
-import { FileText, CreditCard, CheckCircle, Download, RefreshCw, Upload } from 'lucide-react'
+import { FileText, CreditCard, CheckCircle, Download, RefreshCw } from 'lucide-react'
 
 const FIO_TOKEN_KEY = 'fio_token'
 
 export function DashboardPage() {
   const { data: dashboard, isLoading, refetch } = useDashboard()
-  const { data: settings } = useSettings()
   const fetchTransactions = useFetchTransactions()
-  const importGDrive = useImportGDrive()
   const [isFetching, setIsFetching] = useState(false)
-  const [isImporting, setIsImporting] = useState(false)
 
   const handleFetchTransactions = async () => {
     // Get Fio token from localStorage (user's browser storage)
@@ -25,9 +22,9 @@ export function DashboardPage() {
 
     setIsFetching(true)
     try {
-      // Fetch last 3 months
+      // Fetch last ~1 month (from 1st of previous month)
       const today = new Date()
-      const fromDate = new Date(today.getFullYear(), today.getMonth() - 2, 1)
+      const fromDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       const result = await fetchTransactions.mutateAsync({
         fio_token: fioToken,
         from_date: fromDate.toISOString().split('T')[0],
@@ -42,25 +39,6 @@ export function DashboardPage() {
     }
   }
 
-  const handleImportGDrive = async () => {
-    const folderId = settings?.invoice_parent_folder_id
-    if (!folderId) {
-      showApiError(new Error('GDrive folder not configured. Go to Settings.'), 'Import')
-      return
-    }
-
-    setIsImporting(true)
-    try {
-      const result = await importGDrive.mutateAsync({ folder_id: folderId })
-      showSuccess(`Imported ${result.imported} invoices, auto-matched ${result.auto_matched}`)
-      refetch()
-    } catch (error) {
-      showApiError(error, 'Import from GDrive')
-    } finally {
-      setIsImporting(false)
-    }
-  }
-
   if (isLoading) {
     return <div className="flex justify-center py-12">Loading...</div>
   }
@@ -69,24 +47,14 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={handleFetchTransactions}
-            disabled={isFetching}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
-            Fetch Transactions
-          </Button>
-          <Button
-            variant="outline"
-            onClick={handleImportGDrive}
-            disabled={isImporting}
-          >
-            <Upload className={`h-4 w-4 mr-2 ${isImporting ? 'animate-spin' : ''}`} />
-            Import from GDrive
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          onClick={handleFetchTransactions}
+          disabled={isFetching}
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+          Fetch Transactions
+        </Button>
       </div>
 
       {/* Summary Cards */}

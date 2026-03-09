@@ -30,6 +30,12 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Initialize the database by creating all tables."""
+    """Initialize the database by creating all tables and running migrations."""
     from .models import Base
     Base.metadata.create_all(bind=engine)
+
+    # Run migrations for existing databases
+    from .migrations import run_all_migrations
+    applied = run_all_migrations(DATABASE_PATH)
+    if applied:
+        print(f"Applied migrations: {', '.join(applied)}")

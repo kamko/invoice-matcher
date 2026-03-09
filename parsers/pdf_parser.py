@@ -667,8 +667,9 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
     result = {
         'vendor': None,
         'amount': None,
+        'currency': 'EUR',  # Default to EUR
         'invoice_date': None,
-        'payment_type': 'unknown',
+        'payment_type': 'card',  # Default to card
         'vs': None,
         'iban': None,
         'is_credit_note': False,
@@ -709,13 +710,15 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
                     return result
                 raise ValueError(f"Cannot extract date from image PDF: {filename}")
 
-            # 2. Try LLM extraction (for amount, vs, vendor, and date if needed)
+            # 2. Try LLM extraction (for amount, currency, vs, vendor, and date if needed)
             llm_date = None
             try:
                 from parsers.llm_extractor import extract_invoice_data_llm
                 llm_data = extract_invoice_data_llm(text)
                 if llm_data.get("amount"):
                     result['amount'] = llm_data["amount"]
+                if llm_data.get("currency"):
+                    result['currency'] = llm_data["currency"]
                 if llm_data.get("vs"):
                     result['vs'] = llm_data["vs"]
                 if llm_data.get("iban"):

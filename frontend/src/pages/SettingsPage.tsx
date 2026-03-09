@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSettings, useSetSetting, useGDriveStatus, useGDriveAuthUrl, useGDriveFolders, useAppConfig, showSuccess, showApiError } from '../api/client'
+import { useSettings, useSetSetting, useGDriveStatus, useGDriveAuthUrl, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, showSuccess, showApiError } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -11,7 +11,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, LogOut, FolderOpen, ChevronRight, ArrowLeft } from 'lucide-react'
+import { Checkbox } from '../components/ui/checkbox'
+import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, LogOut, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check } from 'lucide-react'
 
 const FIO_TOKEN_KEY = 'fio_token'
 
@@ -21,18 +22,37 @@ export function SettingsPage() {
   const { data: gdriveStatus, refetch: refetchGDrive } = useGDriveStatus()
   const getAuthUrl = useGDriveAuthUrl()
   const { data: appConfig } = useAppConfig()
+  const importGDrive = useImportGDrive()
+  const getFolderInfo = useGDriveFolderInfo()
+  const [isImporting, setIsImporting] = useState(false)
+  const [showImportWizard, setShowImportWizard] = useState(false)
+  const [selectedImportFolders, setSelectedImportFolders] = useState<string[]>([])
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; results: Array<{ folder: string; imported: number; skipped: number }> } | null>(null)
 
   const [fioToken, setFioToken] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [invoiceFolder, setInvoiceFolder] = useState('')
   const [invoiceFolderName, setInvoiceFolderName] = useState('')
+  const [accountantFolder, setAccountantFolder] = useState('')
+  const [accountantFolderName, setAccountantFolderName] = useState('')
   const [initialized, setInitialized] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
+  const [folderPickerTarget, setFolderPickerTarget] = useState<'invoice' | 'accountant'>('invoice')
   const [currentFolderId, setCurrentFolderId] = useState('root')
   const [folderPath, setFolderPath] = useState<Array<{ id: string; name: string }>>([{ id: 'root', name: 'My Drive' }])
+  const [folderSearch, setFolderSearch] = useState('')
 
   const { data: foldersData, isLoading: foldersLoading } = useGDriveFolders(
-    showFolderPicker ? currentFolderId : ''
+    showFolderPicker ? currentFolderId : '',
+    {
+      search: folderSearch || undefined,
+      showAll: !!folderSearch,
+    }
+  )
+
+  // Fetch subfolders when import wizard is open
+  const { data: importSubfolders, isLoading: subfoldersLoading } = useImportSubfolders(
+    showImportWizard ? invoiceFolder : ''
   )
 
   // Listen for GDrive OAuth callback
@@ -87,6 +107,8 @@ export function SettingsPage() {
       if (settings) {
         setInvoiceFolder(settings.invoice_parent_folder_id || '')
         setInvoiceFolderName(settings.invoice_parent_folder_name || '')
+        setAccountantFolder(settings.accountant_folder_id || '')
+        setAccountantFolderName(settings.accountant_folder_name || '')
       }
 
       setInitialized(true)
@@ -111,9 +133,38 @@ export function SettingsPage() {
     }
   }
 
-  const openFolderPicker = () => {
+  const handleSaveAccountantFolder = async () => {
+    try {
+      await setSetting.mutateAsync({ key: 'accountant_folder_id', value: accountantFolder })
+      if (accountantFolderName) {
+        await setSetting.mutateAsync({ key: 'accountant_folder_name', value: accountantFolderName })
+      }
+      showSuccess('Accountant folder saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save accountant folder')
+    }
+  }
+
+  const lookupFolderName = async (folderId: string, target: 'invoice' | 'accountant') => {
+    if (!folderId || folderId.length < 10) return
+    try {
+      const info = await getFolderInfo.mutateAsync(folderId)
+      if (target === 'invoice') {
+        setInvoiceFolderName(info.name)
+      } else {
+        setAccountantFolderName(info.name)
+      }
+    } catch {
+      // Folder not found or error - leave name empty
+    }
+  }
+
+  const openFolderPicker = (target: 'invoice' | 'accountant') => {
+    setFolderPickerTarget(target)
     setCurrentFolderId('root')
     setFolderPath([{ id: 'root', name: 'My Drive' }])
+    setFolderSearch('')
     setShowFolderPicker(true)
   }
 
@@ -131,9 +182,46 @@ export function SettingsPage() {
   }
 
   const selectFolder = (folderId: string, folderName: string) => {
-    setInvoiceFolder(folderId)
-    setInvoiceFolderName(folderName)
+    if (folderPickerTarget === 'invoice') {
+      setInvoiceFolder(folderId)
+      setInvoiceFolderName(folderName)
+    } else {
+      setAccountantFolder(folderId)
+      setAccountantFolderName(folderName)
+    }
     setShowFolderPicker(false)
+  }
+
+  const handleImportSelected = async () => {
+    if (selectedImportFolders.length === 0) {
+      showApiError(new Error('Select at least one folder'), 'Import')
+      return
+    }
+
+    setIsImporting(true)
+    setImportProgress({ current: 0, total: selectedImportFolders.length, results: [] })
+
+    const results: Array<{ folder: string; imported: number; skipped: number }> = []
+
+    for (let i = 0; i < selectedImportFolders.length; i++) {
+      const folderId = selectedImportFolders[i]
+      const folderName = importSubfolders?.folders.find(f => f.id === folderId)?.name || folderId
+
+      setImportProgress(prev => prev ? { ...prev, current: i + 1 } : null)
+
+      try {
+        const result = await importGDrive.mutateAsync({ folder_id: folderId })
+        results.push({ folder: folderName, imported: result.imported, skipped: result.skipped })
+      } catch (error) {
+        results.push({ folder: folderName, imported: 0, skipped: 0 })
+      }
+    }
+
+    setImportProgress(prev => prev ? { ...prev, results } : null)
+    setIsImporting(false)
+
+    const totalImported = results.reduce((sum, r) => sum + r.imported, 0)
+    showSuccess(`Imported ${totalImported} invoices from ${selectedImportFolders.length} folders`)
   }
 
   if (isLoading) {
@@ -244,26 +332,95 @@ export function SettingsPage() {
             <div className="border-t pt-4 space-y-2">
               <Label>Invoice Parent Folder</Label>
               <div className="flex gap-2">
-                <Input
-                  value={invoiceFolderName || invoiceFolder}
-                  readOnly
-                  placeholder="Select a folder..."
-                  className="flex-1"
-                />
-                {gdriveStatus?.authenticated && (
-                  <Button variant="outline" onClick={openFolderPicker}>
-                    <FolderOpen className="h-4 w-4 mr-2" />
-                    Browse
+                <div className="flex-1 space-y-1">
+                  <Input
+                    value={invoiceFolderName || (invoiceFolder ? '(loading...)' : '')}
+                    readOnly
+                    placeholder="Folder name"
+                    className={invoiceFolderName ? '' : 'text-muted-foreground'}
+                  />
+                  <Input
+                    value={invoiceFolder}
+                    onChange={(e) => {
+                      setInvoiceFolder(e.target.value)
+                      setInvoiceFolderName('')
+                    }}
+                    onBlur={() => lookupFolderName(invoiceFolder, 'invoice')}
+                    placeholder="Paste folder ID..."
+                    className="font-mono text-xs h-7"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  {gdriveStatus?.authenticated && (
+                    <Button variant="outline" size="sm" onClick={() => openFolderPicker('invoice')}>
+                      <FolderOpen className="h-4 w-4 mr-1" />
+                      Browse
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={handleSaveInvoiceFolder} disabled={setSetting.isPending || !invoiceFolder}>
+                    <Save className="h-4 w-4 mr-1" />
+                    Save
                   </Button>
-                )}
-                <Button onClick={handleSaveInvoiceFolder} disabled={setSetting.isPending || !invoiceFolder}>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save
-                </Button>
+                </div>
               </div>
-              {invoiceFolder && (
-                <p className="text-xs text-muted-foreground">ID: {invoiceFolder}</p>
+              {invoiceFolder && gdriveStatus?.authenticated && (
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedImportFolders([])
+                      setImportProgress(null)
+                      setShowImportWizard(true)
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Import Existing Invoices from GDrive
+                  </Button>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Select subfolders (YYYYMM) to import from
+                  </p>
+                </div>
               )}
+            </div>
+
+            {/* Accountant Export Folder */}
+            <div className="border-t pt-4 space-y-2">
+              <Label>Accountant Export Folder</Label>
+              <div className="flex gap-2">
+                <div className="flex-1 space-y-1">
+                  <Input
+                    value={accountantFolderName || (accountantFolder ? '(loading...)' : '')}
+                    readOnly
+                    placeholder="Folder name"
+                    className={accountantFolderName ? '' : 'text-muted-foreground'}
+                  />
+                  <Input
+                    value={accountantFolder}
+                    onChange={(e) => {
+                      setAccountantFolder(e.target.value)
+                      setAccountantFolderName('')
+                    }}
+                    onBlur={() => lookupFolderName(accountantFolder, 'accountant')}
+                    placeholder="Paste folder ID..."
+                    className="font-mono text-xs h-7"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  {gdriveStatus?.authenticated && (
+                    <Button variant="outline" size="sm" onClick={() => openFolderPicker('accountant')}>
+                      <FolderOpen className="h-4 w-4 mr-1" />
+                      Browse
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={handleSaveAccountantFolder} disabled={setSetting.isPending || !accountantFolder}>
+                    <Save className="h-4 w-4 mr-1" />
+                    Save
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Shared folder where matched invoices will be copied for your accountant
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -320,31 +477,46 @@ export function SettingsPage() {
       <Dialog open={showFolderPicker} onOpenChange={setShowFolderPicker}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Select Invoice Folder</DialogTitle>
+            <DialogTitle>
+              {folderPickerTarget === 'invoice' ? 'Select Invoice Folder' : 'Select Accountant Folder'}
+            </DialogTitle>
           </DialogHeader>
 
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-1 text-sm text-muted-foreground overflow-x-auto pb-2">
-            {folderPath.map((folder, index) => (
-              <span key={folder.id} className="flex items-center">
-                {index > 0 && <ChevronRight className="h-4 w-4 mx-1" />}
-                <button
-                  className="hover:text-foreground hover:underline"
-                  onClick={() => {
-                    const newPath = folderPath.slice(0, index + 1)
-                    setFolderPath(newPath)
-                    setCurrentFolderId(folder.id)
-                  }}
-                >
-                  {folder.name}
-                </button>
-              </span>
-            ))}
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={folderSearch}
+              onChange={(e) => setFolderSearch(e.target.value)}
+              placeholder="Search folders..."
+              className="pl-8"
+            />
           </div>
+
+          {/* Breadcrumb - hidden during search */}
+          {!folderSearch && (
+            <div className="flex items-center gap-1 text-sm text-muted-foreground overflow-x-auto pb-2">
+              {folderPath.map((folder, index) => (
+                <span key={folder.id} className="flex items-center">
+                  {index > 0 && <ChevronRight className="h-4 w-4 mx-1" />}
+                  <button
+                    className="hover:text-foreground hover:underline"
+                    onClick={() => {
+                      const newPath = folderPath.slice(0, index + 1)
+                      setFolderPath(newPath)
+                      setCurrentFolderId(folder.id)
+                    }}
+                  >
+                    {folder.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Folder List */}
           <div className="border rounded-lg max-h-64 overflow-y-auto">
-            {folderPath.length > 1 && (
+            {folderPath.length > 1 && !folderSearch && (
               <button
                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted text-left border-b"
                 onClick={navigateBack}
@@ -360,7 +532,7 @@ export function SettingsPage() {
               </div>
             ) : foldersData?.folders.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
-                No subfolders
+                {folderSearch ? 'No folders found' : 'No subfolders'}
               </div>
             ) : (
               foldersData?.folders.map((folder) => (
@@ -370,10 +542,20 @@ export function SettingsPage() {
                 >
                   <button
                     className="flex items-center gap-2 flex-1 text-left"
-                    onClick={() => navigateToFolder(folder.id, folder.name)}
+                    onClick={() => {
+                      if (folderSearch) {
+                        // When clicking from search results, select directly
+                        selectFolder(folder.id, folder.name)
+                      } else {
+                        navigateToFolder(folder.id, folder.name)
+                      }
+                    }}
                   >
-                    <FolderOpen className="h-4 w-4 text-amber-500" />
+                    <FolderOpen className={`h-4 w-4 ${folder.shared ? 'text-blue-500' : 'text-amber-500'}`} />
                     <span>{folder.name}</span>
+                    {folder.shared && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">shared</span>
+                    )}
                   </button>
                   <Button
                     variant="outline"
@@ -388,7 +570,7 @@ export function SettingsPage() {
           </div>
 
           <DialogFooter>
-            {currentFolderId !== 'root' && (
+            {currentFolderId !== 'root' && !folderSearch && (
               <Button
                 variant="default"
                 onClick={() => selectFolder(currentFolderId, folderPath[folderPath.length - 1].name)}
@@ -400,6 +582,130 @@ export function SettingsPage() {
               Cancel
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Wizard Modal */}
+      <Dialog open={showImportWizard} onOpenChange={setShowImportWizard}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Invoices from GDrive</DialogTitle>
+          </DialogHeader>
+
+          {!importProgress ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Select the month folders (YYYYMM) to import:
+              </p>
+
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                {subfoldersLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : !importSubfolders?.folders.length ? (
+                  <div className="py-8 text-center text-muted-foreground">
+                    No subfolders found
+                  </div>
+                ) : (
+                  importSubfolders.folders
+                    .sort((a, b) => b.name.localeCompare(a.name))
+                    .map((folder) => (
+                      <label
+                        key={folder.id}
+                        className="flex items-center gap-3 px-3 py-2 hover:bg-muted cursor-pointer border-b last:border-0"
+                      >
+                        <Checkbox
+                          checked={selectedImportFolders.includes(folder.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedImportFolders([...selectedImportFolders, folder.id])
+                            } else {
+                              setSelectedImportFolders(selectedImportFolders.filter(id => id !== folder.id))
+                            }
+                          }}
+                        />
+                        <FolderOpen className="h-4 w-4 text-amber-500" />
+                        <span className="font-mono">{folder.name}</span>
+                      </label>
+                    ))
+                )}
+              </div>
+
+              <div className="flex justify-between text-sm">
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="p-0 h-auto"
+                  onClick={() => setSelectedImportFolders(importSubfolders?.folders.map(f => f.id) || [])}
+                >
+                  Select All
+                </Button>
+                <span className="text-muted-foreground">
+                  {selectedImportFolders.length} selected
+                </span>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowImportWizard(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleImportSelected}
+                  disabled={selectedImportFolders.length === 0 || isImporting}
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" />
+                      Import Selected
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              {/* Progress view */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  {isImporting ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Check className="h-5 w-5 text-green-600" />
+                  )}
+                  <span>
+                    {isImporting
+                      ? `Importing folder ${importProgress.current} of ${importProgress.total}...`
+                      : 'Import complete!'}
+                  </span>
+                </div>
+
+                {importProgress.results.length > 0 && (
+                  <div className="border rounded-lg max-h-48 overflow-y-auto">
+                    {importProgress.results.map((r, i) => (
+                      <div key={i} className="flex justify-between px-3 py-2 border-b last:border-0 text-sm">
+                        <span className="font-mono">{r.folder}</span>
+                        <span className="text-muted-foreground">
+                          {r.imported} imported, {r.skipped} skipped
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button onClick={() => setShowImportWizard(false)} disabled={isImporting}>
+                  Close
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -41,6 +41,7 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         filename=invoice.filename,
         vendor=invoice.vendor,
         amount=invoice.amount,
+        currency=invoice.currency or 'EUR',
         invoice_date=invoice.invoice_date,
         payment_type=invoice.payment_type,
         vs=invoice.vs,
@@ -119,6 +120,7 @@ async def analyze_pdf(file: UploadFile = File(...)):
             "extracted": {
                 "vendor": parsed.get('vendor'),
                 "amount": str(parsed['amount']) if parsed.get('amount') else None,
+                "currency": parsed.get('currency', 'EUR'),
                 "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,
                 "payment_type": parsed.get('payment_type'),
                 "vs": parsed.get('vs'),
@@ -144,11 +146,21 @@ async def upload_invoice(
     invoice_date: Optional[str] = Form(None),
     payment_type: Optional[str] = Form(None),
     amount: Optional[str] = Form(None),
+    currency: Optional[str] = Form(None),
+    gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
     db: Session = Depends(get_db)
 ):
-    """Upload a PDF invoice and extract data."""
+    """Upload a PDF invoice to Google Drive and extract data.
+
+    The file is always uploaded to Google Drive. GDrive authentication is required.
+    """
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    # Verify GDrive is authenticated
+    from web.routers.gdrive import _gdrive_service
+    if not _gdrive_service or not _gdrive_service._credentials:
+        raise HTTPException(status_code=400, detail="Google Drive not connected. Please authenticate first.")
 
     # Save to temp file for parsing (use original filename for date extraction)
     content = await file.read()
@@ -178,6 +190,7 @@ async def upload_invoice(
             raise HTTPException(status_code=400, detail="Could not determine invoice date")
 
         final_type = payment_type or parsed.get('payment_type', 'card')
+        final_currency = currency or parsed.get('currency', 'EUR')
         # Use provided amount or fall back to parsed
         final_amount = None
         if amount:
@@ -186,13 +199,56 @@ async def upload_invoice(
             parsed_amount = parsed.get('amount')
             final_amount = Decimal(str(parsed_amount)) if not isinstance(parsed_amount, Decimal) else parsed_amount
 
+        # Find or create month subfolder (YYYYMM format)
+        month_folder_name = final_date.strftime('%Y%m')
+        try:
+            target_folder_id = _gdrive_service.find_or_create_subfolder(gdrive_folder_id, month_folder_name)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create month folder: {e}")
+
+        # Generate proper filename: YYYY-MM-DD-NNN_type_vendor.pdf
+        import re
+        date_str = final_date.strftime('%Y-%m-%d')
+
+        # Find next sequence number for this date
+        existing_invoices = db.query(Invoice).filter(
+            Invoice.invoice_date == final_date
+        ).all()
+        next_seq = len(existing_invoices) + 1
+
+        # Slugify vendor name
+        vendor_slug = 'unknown'
+        if final_vendor:
+            vendor_slug = re.sub(r'[^\w\s-]', '', final_vendor.lower())
+            vendor_slug = re.sub(r'[\s]+', '-', vendor_slug)[:30]
+
+        proper_filename = f"{date_str}-{next_seq:03d}_{final_type}_{vendor_slug}.pdf"
+
+        # Upload to GDrive (to the month subfolder) with proper filename
+        try:
+            gdrive_file_id = _gdrive_service.upload_pdf(target_folder_id, proper_filename, content)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to upload to Google Drive: {e}")
+
+        # Store PDF in cache so it's viewable
+        cache_entry = PDFCache(
+            gdrive_file_id=gdrive_file_id,
+            filename=proper_filename,
+            content=content,
+            file_size=len(content),
+            cached_at=datetime.utcnow(),
+            last_accessed_at=datetime.utcnow(),
+        )
+        db.add(cache_entry)
+
         # Create invoice record
         invoice = Invoice(
-            gdrive_file_id=None,  # Manual upload
+            gdrive_file_id=gdrive_file_id,
             receipt_index=0,
-            filename=file.filename,
+            filename=proper_filename,
             vendor=final_vendor,
             amount=final_amount,
+            currency=final_currency,
             invoice_date=final_date,
             payment_type=final_type,
             vs=parsed.get('vs'),
@@ -220,12 +276,31 @@ async def upload_invoice(
         os.rmdir(temp_dir)
 
 
+@router.get("/import-gdrive/subfolders")
+def list_import_subfolders(
+    folder_id: str = Query(..., description="Parent folder ID"),
+):
+    """List subfolders for import wizard."""
+    from web.routers.gdrive import _gdrive_service
+
+    if not _gdrive_service or not _gdrive_service._credentials:
+        raise HTTPException(status_code=503, detail="GDrive not connected")
+
+    try:
+        folders = _gdrive_service.list_folders(folder_id)
+        return {
+            "folders": [{"id": f.id, "name": f.name} for f in folders]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/import-gdrive")
 async def import_gdrive(
     request: ImportGDriveRequest,
     db: Session = Depends(get_db)
 ):
-    """Import invoices from a GDrive folder."""
+    """Import invoices from a GDrive folder (single folder, no recursion)."""
     from web.routers.gdrive import _gdrive_service
 
     if not _gdrive_service:
@@ -234,7 +309,8 @@ async def import_gdrive(
 
     folder_id = request.folder_id
     send_info("Listing files from Google Drive...", "import_gdrive")
-    files = _gdrive_service.list_pdf_files(folder_id)
+    # Only import from the specified folder, not recursively
+    files = _gdrive_service.list_pdfs(folder_id, recursive=False)
 
     total_files = len(files)
     send_info(f"Found {total_files} PDF files", "import_gdrive")
@@ -300,6 +376,7 @@ async def import_gdrive(
                 filename=filename,
                 vendor=parsed.get('vendor'),
                 amount=Decimal(str(parsed['amount'])) if parsed.get('amount') else None,
+                currency=parsed.get('currency', 'EUR'),
                 invoice_date=parsed.get('invoice_date'),
                 payment_type=parsed.get('payment_type', 'card'),
                 vs=parsed.get('vs'),
@@ -358,10 +435,34 @@ def update_invoice(
 
 @router.delete("/{invoice_id}")
 def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    """Delete an invoice."""
+    """Delete an invoice and its PDF from Google Drive."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Delete from GDrive first
+    gdrive_deleted = False
+    if invoice.gdrive_file_id:
+        from web.routers.gdrive import _gdrive_service
+        if not _gdrive_service or not _gdrive_service._credentials:
+            raise HTTPException(
+                status_code=400,
+                detail="Google Drive not connected. Cannot delete invoice without deleting the PDF from GDrive."
+            )
+
+        try:
+            _gdrive_service.delete_file(invoice.gdrive_file_id)
+            gdrive_deleted = True
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete from Google Drive: {e}")
+
+    # Delete from PDF cache
+    if invoice.gdrive_file_id:
+        cache = db.query(PDFCache).filter(
+            PDFCache.gdrive_file_id == invoice.gdrive_file_id
+        ).first()
+        if cache:
+            db.delete(cache)
 
     # If matched, unmatch first
     if invoice.transaction_id:
@@ -374,7 +475,10 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
     db.delete(invoice)
     db.commit()
 
-    return {"success": True, "message": "Invoice deleted"}
+    return {
+        "success": True,
+        "message": "Invoice deleted" + (" from GDrive" if gdrive_deleted else "")
+    }
 
 
 @router.post("/{invoice_id}/match", response_model=InvoiceResponse)
@@ -439,6 +543,7 @@ def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
             "extracted": {
                 "vendor": parsed.get('vendor'),
                 "amount": str(parsed['amount']) if parsed.get('amount') else None,
+                "currency": parsed.get('currency', 'EUR'),
                 "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,
                 "payment_type": parsed.get('payment_type'),
                 "vs": parsed.get('vs'),
@@ -472,9 +577,14 @@ def get_invoice_suggestions(invoice_id: int, db: Session = Depends(get_db)):
                 counter_name=t.counter_name,
                 vs=t.vs,
                 note=t.note,
-                score=score,
+                extracted_vendor=t.extracted_vendor,
+                score=breakdown['score'],
+                amount_score=breakdown['amount_score'],
+                date_score=breakdown['date_score'],
+                vendor_score=breakdown['vendor_score'],
+                date_diff_days=breakdown['date_diff_days'],
             )
-            for t, score in suggestions
+            for t, breakdown in suggestions
         ]
     )
 
@@ -487,9 +597,9 @@ def get_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     if not invoice.gdrive_file_id:
-        raise HTTPException(status_code=404, detail="No PDF available (manual upload without file)")
+        raise HTTPException(status_code=404, detail="No PDF available")
 
-    # Check cache first
+    # Check cache first (works for both local uploads and GDrive imports)
     cache = db.query(PDFCache).filter(
         PDFCache.gdrive_file_id == invoice.gdrive_file_id
     ).first()
@@ -503,7 +613,7 @@ def get_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
             headers={"Content-Disposition": f'inline; filename="{invoice.filename}"'}
         )
 
-    # Download from GDrive
+    # Download from GDrive if not in cache
     from web.routers.gdrive import _gdrive_service
     if not _gdrive_service:
         raise HTTPException(status_code=503, detail="GDrive service not available")

@@ -30,14 +30,14 @@ import {
 
 function formatCurrency(amount: string) {
   const num = parseFloat(amount)
-  return new Intl.NumberFormat('cs-CZ', {
+  return new Intl.NumberFormat('sk-SK', {
     style: 'currency',
-    currency: 'CZK',
+    currency: 'EUR',
   }).format(num)
 }
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('cs-CZ')
+  return new Date(dateStr).toLocaleDateString('sk-SK')
 }
 
 export function RulesPage() {

@@ -12,6 +12,7 @@ import {
   useGDriveStatus,
   useRenameGDriveFile,
   useDashboard,
+  useSettings,
   showApiError,
   showSuccess,
   Invoice,
@@ -59,6 +60,7 @@ export function InvoicesPage() {
   const [uploadAmount, setUploadAmount] = useState('')
   const [uploadPaymentType, setUploadPaymentType] = useState('card')
   const [uploadAnalyzing, setUploadAnalyzing] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [editFilename, setEditFilename] = useState('')
   const [editVendor, setEditVendor] = useState('')
@@ -67,10 +69,12 @@ export function InvoicesPage() {
   const [editPaymentType, setEditPaymentType] = useState('')
   const [editVs, setEditVs] = useState('')
   const [editIban, setEditIban] = useState('')
+  const [editCurrency, setEditCurrency] = useState('EUR')
   // Track parsed/suggested values from reanalyze
   const [parsedValues, setParsedValues] = useState<{
     vendor?: string
     amount?: string
+    currency?: string
     invoice_date?: string
     payment_type?: string
     vs?: string
@@ -90,6 +94,7 @@ export function InvoicesPage() {
   const updateInvoice = useUpdateInvoice()
   const reanalyzeInvoice = useReanalyzeInvoice()
   const { data: gdriveStatus } = useGDriveStatus()
+  const { data: settings } = useSettings()
   const renameGDriveFile = useRenameGDriveFile()
 
   const handleMatch = async (transactionId: string) => {
@@ -133,20 +138,36 @@ export function InvoicesPage() {
 
   const handleUpload = async () => {
     if (!uploadFile) return
+
+    const folderId = settings?.invoice_parent_folder_id
+    if (!folderId) {
+      showApiError(new Error('No invoice folder configured. Go to Settings first.'), 'Upload')
+      return
+    }
+
+    if (!gdriveStatus?.authenticated) {
+      showApiError(new Error('Google Drive not connected. Go to Settings to connect.'), 'Upload')
+      return
+    }
+
+    setIsUploading(true)
     try {
       await uploadInvoice.mutateAsync({
         file: uploadFile,
         vendor: uploadVendor || undefined,
         invoiceDate: uploadDate || undefined,
-        paymentType: uploadPaymentType || undefined,
+        paymentType: uploadPaymentType || 'card',  // Default to card if empty
         amount: uploadAmount || undefined,
+        gdriveFolderId: folderId,
       })
-      showSuccess('Invoice uploaded')
+      showSuccess('Invoice uploaded to Google Drive')
       setShowUploadModal(false)
       resetUploadForm()
       refetch()
     } catch (error) {
       showApiError(error, 'Upload invoice')
+    } finally {
+      setIsUploading(false)
     }
   }
 
@@ -156,6 +177,15 @@ export function InvoicesPage() {
     setUploadDate('')
     setUploadAmount('')
     setUploadPaymentType('card')
+  }
+
+  // Generate preview of the final filename
+  const getPreviewFilename = () => {
+    if (!uploadDate) return null
+    const vendorSlug = uploadVendor
+      ? uploadVendor.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 30)
+      : 'unknown'
+    return `${uploadDate}-001_${uploadPaymentType || 'card'}_${vendorSlug}.pdf`
   }
 
   const handleFileDrop = async (file: File) => {
@@ -228,6 +258,7 @@ export function InvoicesPage() {
       // User can click on the suggestion to apply it
       if (!editVendor && extracted.vendor) setEditVendor(extracted.vendor)
       if (!editAmount && extracted.amount) setEditAmount(extracted.amount)
+      if (extracted.currency) setEditCurrency(extracted.currency) // Always update currency
       if (!editDate && extracted.invoice_date) setEditDate(extracted.invoice_date)
       if (!editPaymentType && extracted.payment_type) setEditPaymentType(extracted.payment_type)
       if (!editVs && extracted.vs) setEditVs(extracted.vs)
@@ -289,6 +320,7 @@ export function InvoicesPage() {
     setEditFilename(inv.filename || '')
     setEditVendor(inv.vendor || '')
     setEditAmount(inv.amount || '')
+    setEditCurrency(inv.currency || 'EUR')
     setEditDate(inv.invoice_date || '')
     setEditPaymentType(inv.payment_type || 'card')
     setEditVs(inv.vs || '')
@@ -329,6 +361,7 @@ export function InvoicesPage() {
         filename: filenameChanged ? newFilename : undefined,
         vendor: editVendor || undefined,
         amount: editAmount || undefined,
+        currency: editCurrency || undefined,
         invoice_date: editDate || undefined,
         payment_type: editPaymentType || undefined,
         vs: editVs || undefined,
@@ -343,12 +376,12 @@ export function InvoicesPage() {
     }
   }
 
-  const formatAmount = (amount?: string) => {
+  const formatAmount = (amount?: string, currency: string = 'EUR') => {
     if (!amount) return '-'
     const num = parseFloat(amount)
-    return new Intl.NumberFormat('de-DE', {
+    return new Intl.NumberFormat('sk-SK', {
       style: 'currency',
-      currency: 'EUR',
+      currency: currency,
     }).format(num)
   }
 
@@ -462,7 +495,12 @@ export function InvoicesPage() {
                       </div>
                     </TableCell>
                     <TableCell>{inv.vendor || '-'}</TableCell>
-                    <TableCell>{formatAmount(inv.amount)}</TableCell>
+                    <TableCell>
+                      {formatAmount(inv.amount, inv.currency)}
+                      {inv.currency !== 'EUR' && (
+                        <span className="ml-1 text-xs text-orange-600 font-medium">{inv.currency}</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">{inv.payment_type || 'card'}</Badge>
                     </TableCell>
@@ -537,7 +575,7 @@ export function InvoicesPage() {
 
       {/* Match Modal */}
       <Dialog open={showMatchModal} onOpenChange={setShowMatchModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Match Invoice</DialogTitle>
           </DialogHeader>
@@ -555,21 +593,59 @@ export function InvoicesPage() {
               {suggestions?.suggestions.length === 0 && (
                 <p className="text-sm text-muted-foreground">No suggestions found</p>
               )}
-              {suggestions?.suggestions.map((s: MatchSuggestion) => (
-                <div
-                  key={s.transaction_id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted cursor-pointer"
-                  onClick={() => handleMatch(s.transaction_id)}
-                >
-                  <div>
-                    <div className="font-medium">{formatAmount(s.amount)}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {s.date} - {s.counter_name || s.note || 'N/A'}
-                    </div>
-                  </div>
-                  <Badge variant="outline">Score: {s.score}</Badge>
-                </div>
-              ))}
+              {suggestions?.suggestions && suggestions.suggestions.length > 0 && (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-24">Date</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead className="w-24 text-right">Amount</TableHead>
+                      <TableHead>Why</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {suggestions.suggestions.map((s: MatchSuggestion) => (
+                      <TableRow
+                        key={s.transaction_id}
+                        className="cursor-pointer hover:bg-muted"
+                        onClick={() => handleMatch(s.transaction_id)}
+                      >
+                        <TableCell className="text-sm">{s.date}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">
+                            {s.extracted_vendor || s.counter_name || '(unknown)'}
+                          </div>
+                          {s.extracted_vendor && s.counter_name && s.extracted_vendor !== s.counter_name && (
+                            <div className="text-xs text-muted-foreground truncate max-w-48" title={s.counter_name}>
+                              {s.counter_name}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">{formatAmount(s.amount)}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2 text-xs">
+                            <span className={s.amount_score >= 50 ? 'text-green-600' : 'text-muted-foreground'}>
+                              Amt {s.amount_score >= 50 ? '✓' : '✗'}
+                            </span>
+                            <span className={s.date_score >= 20 ? 'text-green-600' : 'text-orange-500'}>
+                              {s.date_diff_days !== undefined && s.date_diff_days !== null
+                                ? `${s.date_diff_days}d`
+                                : '?d'
+                              }
+                            </span>
+                            <span className={s.vendor_score >= 10 ? 'text-green-600' : 'text-muted-foreground'}>
+                              Vnd {s.vendor_score >= 10 ? '~' : '?'}
+                            </span>
+                            <Badge variant="outline" className="text-xs px-1.5 py-0">
+                              {s.score}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -703,13 +779,28 @@ export function InvoicesPage() {
                 />
               </div>
             </div>
+
+            {/* Filename Preview */}
+            {getPreviewFilename() && (
+              <div className="p-3 bg-muted rounded-lg">
+                <Label className="text-xs text-muted-foreground">Will be saved as:</Label>
+                <div className="font-mono text-sm mt-1">{getPreviewFilename()}</div>
+              </div>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowUploadModal(false)}>
+            <Button variant="outline" onClick={() => setShowUploadModal(false)} disabled={isUploading}>
               Cancel
             </Button>
-            <Button onClick={handleUpload} disabled={!uploadFile || uploadAnalyzing}>
-              Upload
+            <Button onClick={handleUpload} disabled={!uploadFile || uploadAnalyzing || isUploading}>
+              {isUploading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                'Upload'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -813,12 +904,25 @@ export function InvoicesPage() {
                     </button>
                   )}
                 </div>
-                <Input
-                  value={editAmount}
-                  onChange={(e) => setEditAmount(e.target.value)}
-                  placeholder="e.g., 123.45"
-                  className={hasSuggestion('amount', editAmount) ? 'border-blue-300' : ''}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                    placeholder="e.g., 123.45"
+                    className={`flex-1 ${hasSuggestion('amount', editAmount) ? 'border-blue-300' : ''}`}
+                  />
+                  <Select
+                    value={editCurrency}
+                    onChange={(e) => setEditCurrency(e.target.value)}
+                    options={[
+                      { value: 'EUR', label: 'EUR' },
+                      { value: 'USD', label: 'USD' },
+                      { value: 'CZK', label: 'CZK' },
+                      { value: 'GBP', label: 'GBP' },
+                    ]}
+                    className="w-20"
+                  />
+                </div>
               </div>
             </div>
 

@@ -215,3 +215,73 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
         "invoices": invoice_stats,
         "transactions": transaction_stats,
     }
+
+
+@router.post("/export/{year_month}/copy-to-gdrive")
+def copy_to_accountant_folder(
+    year_month: str,
+    folder_id: str = Query(..., description="Target GDrive folder ID"),
+    mark_exported: bool = Query(False, description="Mark invoices as exported"),
+    db: Session = Depends(get_db)
+):
+    """Copy matched invoices to a shared GDrive folder (e.g., accountant folder)."""
+    from web.routers.gdrive import _gdrive_service
+
+    if not _gdrive_service or not _gdrive_service._credentials:
+        raise HTTPException(status_code=400, detail="Google Drive not connected")
+
+    # Parse month
+    try:
+        year, mon = map(int, year_month.split('-'))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM")
+
+    from calendar import monthrange
+    start_date = datetime(year, mon, 1).date()
+    last_day = monthrange(year, mon)[1]
+    end_date = datetime(year, mon, last_day).date()
+
+    # Get matched invoices for this month
+    invoices = db.query(Invoice).filter(
+        Invoice.status.in_(['matched', 'exported']),
+        Invoice.invoice_date >= start_date,
+        Invoice.invoice_date <= end_date,
+        Invoice.gdrive_file_id.isnot(None)
+    ).all()
+
+    if not invoices:
+        raise HTTPException(status_code=404, detail="No matched invoices for this month")
+
+    # Find or create month subfolder in target folder (YYYYMM format)
+    month_folder_name = f"{year}{mon:02d}"
+    try:
+        target_subfolder_id = _gdrive_service.find_or_create_subfolder(folder_id, month_folder_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create month folder: {e}")
+
+    copied = 0
+    errors = []
+
+    for invoice in invoices:
+        try:
+            _gdrive_service.copy_file(
+                invoice.gdrive_file_id,
+                target_subfolder_id,
+                invoice.filename  # Keep same filename
+            )
+            copied += 1
+        except Exception as e:
+            errors.append(f"{invoice.filename}: {str(e)}")
+
+    if mark_exported:
+        for invoice in invoices:
+            invoice.status = 'exported'
+        db.commit()
+
+    return {
+        "success": True,
+        "copied": copied,
+        "total": len(invoices),
+        "errors": errors,
+        "target_folder": month_folder_name,
+    }

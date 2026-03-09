@@ -32,6 +32,7 @@ class Invoice(Base):
     filename = Column(String(255), nullable=False)
     vendor = Column(String(255), nullable=True)
     amount = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(3), default='EUR')  # EUR, USD, CZK, etc.
     invoice_date = Column(Date, nullable=True)  # Determines "invoice month" for VAT
     payment_type = Column(String(20), nullable=True)  # wire/card/cash
     vs = Column(String(50), nullable=True)  # Variable symbol (for wire)
@@ -65,6 +66,7 @@ class Transaction(Base):
     status = Column(String(20), default='unmatched')  # unmatched/matched/known/skipped
     known_rule_id = Column(Integer, ForeignKey("known_transactions.id"), nullable=True)
     skip_reason = Column(String(255), nullable=True)  # If manually skipped
+    extracted_vendor = Column(String(255), nullable=True)  # LLM-extracted vendor for card transactions
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
 

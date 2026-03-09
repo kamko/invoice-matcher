@@ -1,24 +1,53 @@
 import { useState } from 'react'
-import { useDashboard, useMonthStats } from '../api/client'
+import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Label } from '../components/ui/label'
 import { Select } from '../components/ui/select'
 import { Checkbox } from '../components/ui/checkbox'
-import { Download, FileText, CheckCircle } from 'lucide-react'
+import { Download, FileText, CheckCircle, Cloud, Loader2 } from 'lucide-react'
 
 export function ExportPage() {
   const { data: dashboard } = useDashboard()
+  const { data: settings } = useSettings()
+  const { data: gdriveStatus } = useGDriveStatus()
+  const copyToGDrive = useCopyToGDrive()
   const [selectedMonth, setSelectedMonth] = useState('')
   const [markExported, setMarkExported] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
 
   const { data: stats, isLoading: statsLoading } = useMonthStats(selectedMonth || null)
+
+  const accountantFolderId = settings?.accountant_folder_id
+  const accountantFolderName = settings?.accountant_folder_name
 
   const handleExport = () => {
     if (!selectedMonth) return
 
     const url = `/api/export/${selectedMonth}?mark_exported=${markExported}`
     window.open(url, '_blank')
+  }
+
+  const handleCopyToAccountant = async () => {
+    if (!selectedMonth || !accountantFolderId) return
+
+    setIsCopying(true)
+    try {
+      const result = await copyToGDrive.mutateAsync({
+        yearMonth: selectedMonth,
+        folderId: accountantFolderId,
+        markExported,
+      })
+      if (result.errors?.length > 0) {
+        showSuccess(`Copied ${result.copied}/${result.total} invoices (${result.errors.length} errors)`)
+      } else {
+        showSuccess(`Copied ${result.copied} invoices to accountant folder`)
+      }
+    } catch (error) {
+      showApiError(error, 'Copy to GDrive')
+    } finally {
+      setIsCopying(false)
+    }
   }
 
   const monthOptions = [
@@ -68,6 +97,22 @@ export function ExportPage() {
                 <Download className="h-4 w-4 mr-2" />
                 Download ZIP
               </Button>
+
+              {gdriveStatus?.authenticated && accountantFolderId && (
+                <Button
+                  onClick={handleCopyToAccountant}
+                  disabled={!selectedMonth || isCopying}
+                  variant="outline"
+                  className="w-full"
+                >
+                  {isCopying ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Cloud className="h-4 w-4 mr-2" />
+                  )}
+                  Copy to Accountant ({accountantFolderName || 'GDrive'})
+                </Button>
+              )}
             </div>
 
             {/* Stats for selected month */}
@@ -153,6 +198,13 @@ export function ExportPage() {
             If you check "Mark as exported", the invoices will be marked with an "exported" status
             so you can track which months have been processed.
           </p>
+          {accountantFolderId && (
+            <p>
+              <strong>Copy to Accountant</strong>: Copies invoices to your configured shared folder
+              ({accountantFolderName || accountantFolderId}), creating a YYYYMM subfolder automatically.
+              Configure this in Settings.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -25,6 +25,7 @@ class TransactionResponse(TransactionBase):
     status: str  # unmatched/matched/known/skipped
     known_rule_id: Optional[int] = None
     skip_reason: Optional[str] = None
+    extracted_vendor: Optional[str] = None  # LLM-extracted clean vendor name
     fetched_at: Optional[datetime] = None
 
     # Rule info if known

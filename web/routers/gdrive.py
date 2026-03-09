@@ -98,8 +98,20 @@ def handle_callback(code: str, state: Optional[str] = None):
 
 
 @router.get("/folders", response_model=GDriveFolderList)
-def list_folders(parent_id: str = "root", all: bool = False):
-    """List folders in Google Drive."""
+def list_folders(
+    parent_id: str = "root",
+    all: bool = False,
+    search: Optional[str] = None,
+    shared: bool = False,
+):
+    """List folders in Google Drive.
+
+    Args:
+        parent_id: Parent folder ID (default "root")
+        all: If True, list all folders (for search)
+        search: Optional search term to filter by name
+        shared: If True, list only folders shared with me
+    """
     if not _gdrive_service.is_available:
         raise HTTPException(
             status_code=503,
@@ -113,11 +125,39 @@ def list_folders(parent_id: str = "root", all: bool = False):
         )
 
     try:
-        if all:
-            folders = _gdrive_service.list_all_folders()
+        if shared:
+            folders = _gdrive_service.list_shared_folders()
+        elif all or search:
+            folders = _gdrive_service.list_all_folders(search=search)
         else:
             folders = _gdrive_service.list_folders(parent_id)
         return GDriveFolderList(folders=folders)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/folder/{folder_id}")
+def get_folder_info(folder_id: str):
+    """Get folder info by ID."""
+    if not _gdrive_service.is_available:
+        raise HTTPException(
+            status_code=503,
+            detail="Google Drive integration not configured"
+        )
+
+    if not _gdrive_service._credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated with Google Drive"
+        )
+
+    try:
+        folder = _gdrive_service.get_folder_info(folder_id)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        return folder
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -193,7 +233,7 @@ def rename_file(
     db: Session = Depends(get_db),
 ):
     """Rename a file in Google Drive and update all references."""
-    from web.database.models import PDFCache, InvoicePayment, MonthlyReconciliation
+    from web.database.models import PDFCache, Invoice
 
     if not _gdrive_service.is_available:
         raise HTTPException(
@@ -218,7 +258,6 @@ def rename_file(
         _gdrive_service.rename_file(file_id, new_filename)
 
         old_filename = None
-        affected_months = set()
 
         # Update filename in PDFCache
         cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
@@ -226,37 +265,12 @@ def rename_file(
             old_filename = cached.filename
             cached.filename = new_filename
 
-        # Update InvoicePayment records
-        payments = db.query(InvoicePayment).filter(
-            InvoicePayment.gdrive_file_id == file_id
+        # Update Invoice records
+        invoices = db.query(Invoice).filter(
+            Invoice.gdrive_file_id == file_id
         ).all()
-        for payment in payments:
-            payment.filename = new_filename
-            affected_months.add(payment.invoice_month)
-
-        # Update filename in results_json (so UI shows new name without full resync)
-        for year_month in affected_months:
-            month = db.query(MonthlyReconciliation).filter(
-                MonthlyReconciliation.year_month == year_month
-            ).first()
-            if month and month.results_json:
-                results = month.results_json
-                updated = False
-                # Update in matched results
-                for match in results.get("matched", []):
-                    inv = match.get("invoice")
-                    if inv and inv.get("gdrive_file_id") == file_id:
-                        inv["filename"] = new_filename
-                        updated = True
-                # Update in unmatched_invoices
-                for inv in results.get("unmatched_invoices", []):
-                    if inv.get("gdrive_file_id") == file_id:
-                        inv["filename"] = new_filename
-                        updated = True
-                if updated:
-                    month.results_json = results
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(month, "results_json")
+        for invoice in invoices:
+            invoice.filename = new_filename
 
         db.commit()
 
@@ -265,8 +279,6 @@ def rename_file(
             "file_id": file_id,
             "old_filename": old_filename,
             "new_filename": new_filename,
-            "affected_months": list(affected_months),
-            "needs_resync": True,  # Signal to frontend to resync
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

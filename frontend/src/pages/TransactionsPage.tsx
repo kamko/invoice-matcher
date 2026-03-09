@@ -7,6 +7,7 @@ import {
   useSkipTransaction,
   useMarkKnown,
   useDashboard,
+  useFetchTransactions,
   showApiError,
   showSuccess,
   Transaction,
@@ -33,7 +34,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, FileText, Ban } from 'lucide-react'
+import { Checkbox } from '../components/ui/checkbox'
+import { Check, FileText, Ban, RefreshCw } from 'lucide-react'
+
+const FIO_TOKEN_KEY = 'fio_token'
 
 export function TransactionsPage() {
   const search = useSearch()
@@ -50,8 +54,12 @@ export function TransactionsPage() {
   const [skipReason, setSkipReason] = useState('')
   const [knownReason, setKnownReason] = useState('')
   const [knownRuleType, setKnownRuleType] = useState('vendor')
+  const [isFetching, setIsFetching] = useState(false)
+  const [createSkipRule, setCreateSkipRule] = useState(false)
+  const [skipRuleType, setSkipRuleType] = useState('vendor')
 
   const { data: dashboard } = useDashboard()
+  const fetchTransactions = useFetchTransactions()
   const { data, isLoading, refetch } = useTransactions(month || undefined, status || undefined)
   const { data: suggestions } = useTransactionSuggestions(
     showMatchModal ? selectedTransaction?.id ?? null : null
@@ -60,6 +68,30 @@ export function TransactionsPage() {
   const matchTransaction = useMatchTransaction()
   const skipTransaction = useSkipTransaction()
   const markKnown = useMarkKnown()
+
+  const handleFetchTransactions = async () => {
+    const fioToken = localStorage.getItem(FIO_TOKEN_KEY)
+    if (!fioToken) {
+      showApiError(new Error('Fio token not configured. Go to Settings to add it.'), 'Fetch')
+      return
+    }
+    setIsFetching(true)
+    try {
+      const today = new Date()
+      const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+      const result = await fetchTransactions.mutateAsync({
+        fio_token: fioToken,
+        from_date: oneMonthAgo.toISOString().split('T')[0],
+        to_date: today.toISOString().split('T')[0],
+      })
+      showSuccess(`Fetched ${result.new} new transactions`)
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Fetch transactions')
+    } finally {
+      setIsFetching(false)
+    }
+  }
 
   const handleMatch = async (invoiceId: number) => {
     if (!selectedTransaction) return
@@ -80,14 +112,26 @@ export function TransactionsPage() {
   const handleSkip = async () => {
     if (!selectedTransaction) return
     try {
-      await skipTransaction.mutateAsync({
-        transactionId: selectedTransaction.id,
-        reason: skipReason,
-      })
-      showSuccess('Transaction skipped')
+      // If creating a rule, use markKnown which will also skip this transaction
+      if (createSkipRule && skipReason) {
+        const result = await markKnown.mutateAsync({
+          transactionId: selectedTransaction.id,
+          rule_type: skipRuleType,
+          reason: skipReason,
+          vendor_pattern: selectedTransaction.counter_name || selectedTransaction.extracted_vendor || undefined,
+        })
+        showSuccess(`Rule created, matched ${result.matched_count} transactions`)
+      } else {
+        await skipTransaction.mutateAsync({
+          transactionId: selectedTransaction.id,
+          reason: skipReason,
+        })
+        showSuccess('Transaction skipped')
+      }
       setShowSkipModal(false)
       setSelectedTransaction(null)
       setSkipReason('')
+      setCreateSkipRule(false)
       refetch()
     } catch (error) {
       showApiError(error, 'Skip transaction')
@@ -97,11 +141,29 @@ export function TransactionsPage() {
   const handleMarkKnown = async () => {
     if (!selectedTransaction) return
     try {
+      // Build pattern data based on rule type
+      const patternData: Record<string, string | undefined> = {}
+      switch (knownRuleType) {
+        case 'vendor':
+        case 'pattern':
+          patternData.vendor_pattern = selectedTransaction.counter_name || selectedTransaction.extracted_vendor || undefined
+          break
+        case 'note':
+          patternData.note_pattern = selectedTransaction.note || undefined
+          break
+        case 'exact':
+          patternData.amount = selectedTransaction.amount
+          break
+        case 'account':
+          patternData.counter_account = selectedTransaction.counter_account || undefined
+          break
+      }
+
       const result = await markKnown.mutateAsync({
         transactionId: selectedTransaction.id,
         rule_type: knownRuleType,
         reason: knownReason,
-        vendor_pattern: selectedTransaction.counter_name || undefined,
+        ...patternData,
       })
       showSuccess(`Rule created, matched ${result.matched_count} transactions`)
       setShowKnownModal(false)
@@ -115,7 +177,7 @@ export function TransactionsPage() {
 
   const formatAmount = (amount: string) => {
     const num = parseFloat(amount)
-    return new Intl.NumberFormat('de-DE', {
+    return new Intl.NumberFormat('sk-SK', {
       style: 'currency',
       currency: 'EUR',
     }).format(num)
@@ -150,15 +212,59 @@ export function TransactionsPage() {
   ]
 
   const ruleTypeOptions = [
-    { value: 'vendor', label: 'Match by vendor name' },
+    { value: 'vendor', label: 'Match by vendor name (regex)' },
+    { value: 'note', label: 'Match by note text (regex)' },
     { value: 'exact', label: 'Match exact amount' },
-    { value: 'account', label: 'Match counter account' },
+    { value: 'account', label: 'Match by counter account' },
+    { value: 'pattern', label: 'Pattern (vendor regex + amount range)' },
   ]
+
+  // Generate preview of what the rule will match
+  const getRulePreview = (ruleType: string, transaction: Transaction | null) => {
+    if (!transaction) return null
+    switch (ruleType) {
+      case 'vendor':
+        return {
+          label: 'Will match transactions where vendor matches regex:',
+          value: transaction.counter_name || transaction.extracted_vendor || '(no vendor)',
+        }
+      case 'note':
+        return {
+          label: 'Will match transactions where note matches regex:',
+          value: transaction.note?.substring(0, 50) + (transaction.note && transaction.note.length > 50 ? '...' : '') || '(no note)',
+        }
+      case 'exact':
+        return {
+          label: 'Will match transactions with exact amount:',
+          value: formatAmount(transaction.amount),
+        }
+      case 'account':
+        return {
+          label: 'Will match transactions from account:',
+          value: transaction.counter_account || '(no account)',
+        }
+      case 'pattern':
+        return {
+          label: 'Will match vendor regex + amount range (configure in Rules page):',
+          value: `${transaction.counter_name || transaction.extracted_vendor || '?'} around ${formatAmount(transaction.amount)}`,
+        }
+      default:
+        return null
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Transactions</h1>
+        <Button
+          variant="outline"
+          onClick={handleFetchTransactions}
+          disabled={isFetching}
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+          {isFetching ? 'Fetching...' : 'Fetch from Bank'}
+        </Button>
       </div>
 
       {/* Filters */}
@@ -207,6 +313,7 @@ export function TransactionsPage() {
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Amount</TableHead>
+                  <TableHead>Vendor</TableHead>
                   <TableHead>Counter Party</TableHead>
                   <TableHead>VS</TableHead>
                   <TableHead>Status</TableHead>
@@ -215,10 +322,17 @@ export function TransactionsPage() {
               </TableHeader>
               <TableBody>
                 {data?.transactions.map((t) => (
-                  <TableRow key={t.id} className={t.status === 'unmatched' ? 'bg-orange-50' : ''}>
+                  <TableRow key={t.id} className={t.status === 'unmatched' && t.type === 'expense' ? 'bg-orange-50' : ''}>
                     <TableCell>{t.date}</TableCell>
                     <TableCell className={parseFloat(t.amount) < 0 ? 'text-red-600' : 'text-green-600'}>
                       {formatAmount(t.amount)}
+                    </TableCell>
+                    <TableCell>
+                      {t.extracted_vendor ? (
+                        <span className="font-medium">{t.extracted_vendor}</span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="max-w-xs truncate" title={t.counter_name || t.note || ''}>
@@ -227,7 +341,13 @@ export function TransactionsPage() {
                     </TableCell>
                     <TableCell>{t.vs || '-'}</TableCell>
                     <TableCell>
-                      {getStatusBadge(t.status)}
+                      {t.type === 'income' ? (
+                        <Badge className="bg-purple-100 text-purple-800">Income</Badge>
+                      ) : t.type === 'fee' ? (
+                        <Badge className="bg-gray-100 text-gray-800">Fee</Badge>
+                      ) : (
+                        getStatusBadge(t.status)
+                      )}
                       {t.rule_reason && (
                         <span className="ml-2 text-xs text-muted-foreground">{t.rule_reason}</span>
                       )}
@@ -237,7 +357,8 @@ export function TransactionsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        {t.status === 'unmatched' && (
+                        {/* Only show actions for expenses (negative amounts) */}
+                        {t.status === 'unmatched' && t.type === 'expense' && (
                           <>
                             <Button
                               variant="outline"
@@ -275,6 +396,10 @@ export function TransactionsPage() {
                             </Button>
                           </>
                         )}
+                        {/* Fees and income are auto-skipped, no buttons needed */}
+                        {(t.type === 'fee' || t.type === 'income') && t.status !== 'matched' && (
+                          <span className="text-xs text-muted-foreground">auto</span>
+                        )}
                         {t.status === 'matched' && (
                           <Button variant="outline" size="sm" disabled>
                             <Check className="h-4 w-4" />
@@ -286,7 +411,7 @@ export function TransactionsPage() {
                 ))}
                 {data?.transactions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No transactions found
                     </TableCell>
                   </TableRow>
@@ -349,20 +474,60 @@ export function TransactionsPage() {
             <DialogTitle>Skip Transaction</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {selectedTransaction && (
+              <div className="p-3 bg-muted rounded-lg text-sm">
+                <div className="font-medium">{selectedTransaction.extracted_vendor || selectedTransaction.counter_name || 'Unknown'}</div>
+                <div className="text-muted-foreground">{formatAmount(selectedTransaction.amount)} - {selectedTransaction.date}</div>
+              </div>
+            )}
             <div>
-              <Label>Reason (optional)</Label>
+              <Label>Reason {createSkipRule ? '(required for rule)' : '(optional)'}</Label>
               <Input
                 value={skipReason}
                 onChange={(e) => setSkipReason(e.target.value)}
-                placeholder="e.g., Personal expense, duplicate"
+                placeholder="e.g., Personal expense, Bank fees"
               />
             </div>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="create-rule"
+                checked={createSkipRule}
+                onCheckedChange={(checked) => setCreateSkipRule(checked === true)}
+              />
+              <Label htmlFor="create-rule" className="text-sm font-normal">
+                Create rule to auto-skip similar transactions
+              </Label>
+            </div>
+            {createSkipRule && (
+              <>
+                <div>
+                  <Label>Match by</Label>
+                  <Select
+                    value={skipRuleType}
+                    onChange={(e) => setSkipRuleType(e.target.value)}
+                    options={ruleTypeOptions}
+                  />
+                </div>
+                {getRulePreview(skipRuleType, selectedTransaction) && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                    <div className="text-blue-700 font-medium">
+                      {getRulePreview(skipRuleType, selectedTransaction)?.label}
+                    </div>
+                    <div className="font-mono mt-1">
+                      {getRulePreview(skipRuleType, selectedTransaction)?.value}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSkipModal(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSkip}>Skip</Button>
+            <Button onClick={handleSkip} disabled={createSkipRule && !skipReason}>
+              {createSkipRule ? 'Skip & Create Rule' : 'Skip'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -388,6 +553,16 @@ export function TransactionsPage() {
                 options={ruleTypeOptions}
               />
             </div>
+            {getRulePreview(knownRuleType, selectedTransaction) && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                <div className="text-blue-700 font-medium">
+                  {getRulePreview(knownRuleType, selectedTransaction)?.label}
+                </div>
+                <div className="font-mono mt-1">
+                  {getRulePreview(knownRuleType, selectedTransaction)?.value}
+                </div>
+              </div>
+            )}
             <div>
               <Label>Reason / Description</Label>
               <Input

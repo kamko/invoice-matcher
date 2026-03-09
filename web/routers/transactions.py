@@ -23,6 +23,7 @@ from web.schemas.transactions import (
 from web.services.matching_service import MatchingService
 from web.routers.sse import send_progress, send_info, send_error, send_success
 from parsers.fio_api import fetch_transactions_from_api
+from parsers.llm_extractor import extract_vendor_from_note_llm
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
@@ -54,6 +55,7 @@ def _transaction_to_response(
         status=transaction.status,
         known_rule_id=transaction.known_rule_id,
         skip_reason=transaction.skip_reason,
+        extracted_vendor=transaction.extracted_vendor,
         fetched_at=transaction.fetched_at,
         rule_reason=rule_reason,
     )
@@ -161,8 +163,12 @@ def fetch_transactions(
             to_date=request.to_date,
         )
     except Exception as e:
-        send_error(f"Fio API error: {e}", "fetch_transactions")
-        raise HTTPException(status_code=502, detail=f"Fio API error: {e}")
+        # Sanitize error message to avoid leaking token
+        error_msg = str(e)
+        if request.fio_token and request.fio_token in error_msg:
+            error_msg = error_msg.replace(request.fio_token, "***TOKEN***")
+        send_error(f"Fio API error: {error_msg}", "fetch_transactions")
+        raise HTTPException(status_code=502, detail=f"Fio API error: {error_msg}")
 
     fetched = len(raw_transactions)
     send_info(f"Fetched {fetched} transactions from bank", "fetch_transactions")
@@ -174,8 +180,7 @@ def fetch_transactions(
     matching = MatchingService(db)
 
     for i, raw in enumerate(raw_transactions):
-        if i % 10 == 0:  # Update progress every 10 transactions
-            send_progress("fetch_transactions", i, fetched, f"Processing transactions...")
+        send_progress("fetch_transactions", i + 1, fetched, f"Processing transaction {i + 1}/{fetched}...")
 
         # Check if transaction already exists
         existing = db.query(Transaction).filter(
@@ -193,6 +198,15 @@ def fetch_transactions(
         elif raw.amount > 0:
             trans_type = 'income'
 
+        # For card transactions (expenses), extract vendor using LLM
+        extracted_vendor = None
+        if raw.is_card and raw.note and trans_type == 'expense':
+            try:
+                extracted_vendor = extract_vendor_from_note_llm(raw.note)
+            except Exception as e:
+                # Log but don't fail the fetch
+                print(f"LLM vendor extraction failed for {raw.id}: {e}")
+
         # Create new transaction
         transaction = Transaction(
             id=raw.id,
@@ -206,15 +220,25 @@ def fetch_transactions(
             type=trans_type,
             raw_type=raw.raw_type,
             status='unmatched',
+            extracted_vendor=extracted_vendor,
             fetched_at=datetime.utcnow(),
         )
 
-        # Check known transaction rules
-        rule = matching.apply_known_rules(transaction)
-        if rule:
-            transaction.status = 'known'
-            transaction.known_rule_id = rule.id
-            known_matched += 1
+        # Auto-skip fees - they don't need invoice matching
+        if trans_type == 'fee':
+            transaction.status = 'skipped'
+            transaction.skip_reason = 'Bank fee (auto-skipped)'
+        # Auto-skip income - doesn't need invoice matching
+        elif trans_type == 'income':
+            transaction.status = 'skipped'
+            transaction.skip_reason = 'Income (auto-skipped)'
+        else:
+            # Check known transaction rules for expenses
+            rule = matching.apply_known_rules(transaction)
+            if rule:
+                transaction.status = 'known'
+                transaction.known_rule_id = rule.id
+                known_matched += 1
 
         db.add(transaction)
         new_count += 1

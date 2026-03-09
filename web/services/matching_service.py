@@ -91,8 +91,16 @@ class MatchingService:
         self,
         invoice: Invoice,
         limit: int = 5
-    ) -> List[Tuple[Transaction, int]]:
-        """Return ranked list of potential transaction matches for an invoice."""
+    ) -> List[Tuple[Transaction, dict]]:
+        """Return ranked list of potential transaction matches for an invoice.
+
+        Returns list of (Transaction, score_breakdown) tuples where score_breakdown contains:
+        - score: total score 0-100
+        - amount_score: 0-50
+        - date_score: 0-30
+        - vendor_score: 0-20
+        - date_diff_days: Optional[int]
+        """
         candidates = []
 
         for transaction in self.db.query(Transaction).filter(
@@ -102,19 +110,29 @@ class MatchingService:
             if not self._is_compatible(invoice, transaction):
                 continue
 
-            score = 0
+            amount_score = 0
+            date_score = 0
+            vendor_score = 0
+            date_diff_days = None
 
             # Amount match (50 points max)
             if invoice.amount and self._amounts_match(
                 transaction.amount, invoice.amount, tolerance=0.10
             ):
-                score += 50
+                amount_score = 50
 
-            # Date range (30 points max)
-            if invoice.invoice_date and self._dates_in_range(
-                invoice.invoice_date, transaction.date, days=30
-            ):
-                score += 30
+            # Date range (30 points max) - graduated scoring
+            if invoice.invoice_date and transaction.date:
+                diff = abs((transaction.date - invoice.invoice_date).days)
+                date_diff_days = diff
+                if diff <= 3:
+                    date_score = 30
+                elif diff <= 7:
+                    date_score = 25
+                elif diff <= 14:
+                    date_score = 20
+                elif diff <= 30:
+                    date_score = 15
 
             # Vendor similarity (20 points max)
             if invoice.vendor:
@@ -123,13 +141,22 @@ class MatchingService:
                     self._extract_vendor(transaction)
                 )
                 if vendor_sim > 0.5:
-                    score += int(20 * vendor_sim)
+                    vendor_score = int(20 * vendor_sim)
 
-            if score > 0:
-                candidates.append((transaction, score))
+            total_score = amount_score + date_score + vendor_score
 
-        # Sort by score descending
-        candidates.sort(key=lambda x: -x[1])
+            if total_score > 0:
+                score_breakdown = {
+                    'score': total_score,
+                    'amount_score': amount_score,
+                    'date_score': date_score,
+                    'vendor_score': vendor_score,
+                    'date_diff_days': date_diff_days,
+                }
+                candidates.append((transaction, score_breakdown))
+
+        # Sort by total score descending
+        candidates.sort(key=lambda x: -x[1]['score'])
         return candidates[:limit]
 
     def suggest_matches_for_transaction(
@@ -367,10 +394,28 @@ class MatchingService:
     # =========================================================================
 
     def _extract_vendor(self, transaction: Transaction) -> Optional[str]:
-        """Extract vendor name from transaction."""
-        # Try counter_name first
+        """Extract vendor name from transaction.
+
+        Priority:
+        1. extracted_vendor (LLM-extracted, clean)
+        2. counter_name (if useful - not generic bank names)
+        3. Regex extraction from note
+        """
+        # First priority: LLM-extracted vendor
+        if transaction.extracted_vendor:
+            return transaction.extracted_vendor
+
+        # For card transactions, counter_name is often useless ("Visa platba", bank name)
+        # Only use it if it looks like a real vendor name
         if transaction.counter_name and len(transaction.counter_name.strip()) > 2:
-            return transaction.counter_name.strip()
+            cn = transaction.counter_name.strip().lower()
+            # Skip generic bank/card names
+            useless_names = [
+                'visa platba', 'mastercard', 'fio banka', 'card payment',
+                'visa', 'maestro', 'platba kartou'
+            ]
+            if cn not in useless_names:
+                return transaction.counter_name.strip()
 
         # Try to extract from note (e.g., "Nakup: Alza.cz a.s., Prague...")
         note = transaction.note or ''

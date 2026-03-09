@@ -14,6 +14,7 @@ from openai import OpenAI
 class InvoiceData(TypedDict, total=False):
     """Extracted invoice data."""
     amount: Optional[Decimal]
+    currency: Optional[str]  # EUR, USD, CZK, etc.
     date: Optional[DateType]
     vs: Optional[str]
     vendor: Optional[str]
@@ -191,6 +192,7 @@ def extract_invoice_data_llm(text: str, model: str = None) -> InvoiceData:
 
 Fields to extract:
 - amount_to_pay: The TOTAL amount INCLUDING VAT/DPH (the gross total, not the net/base amount). Look for "Celkom vrátane DPH", "Total with VAT", "Suma s DPH", "Celková suma", "Grand Total". If you see both with-VAT and without-VAT amounts, ALWAYS use the WITH-VAT amount. Just the number.
+- currency: The 3-letter currency code (EUR, USD, CZK, GBP, etc.). Look for currency symbols ($, €, £) or currency names near the amount.
 - invoice_date: The date of taxable supply (NOT issue date) in YYYY-MM-DD format. Look for "Dátum zdaniteľného plnenia", "Datum zdanitelneho plnenia", "Tax point date", "Date of supply". If not found, use the invoice issue date ("Dátum vystavenia", "Date of issue").
 - variable_symbol: Payment reference / VS / Variabilný symbol. Digits only, remove any slashes or dashes.
 - vendor_name: Name of the company issuing the invoice (the seller/supplier/Dodávateľ). This is NOT the bank - ignore any bank names in "Bankové spojenie" or payment details section. Look for "Dodávateľ", "Supplier", "From", "Seller".
@@ -232,6 +234,12 @@ JSON response:"""
                 result["amount"] = Decimal(amt_str)
             except:
                 pass
+
+        # Parse currency
+        if data.get("currency"):
+            currency = str(data["currency"]).upper().strip()
+            if len(currency) == 3:
+                result["currency"] = currency
 
         # Parse date
         if data.get("invoice_date"):
@@ -318,6 +326,7 @@ def extract_invoice_data_from_image(pdf_path: Path, model: str = None) -> Invoic
 
 Return a JSON array of receipts. For EACH receipt found, extract:
 - amount: The TOTAL amount INCLUDING VAT/tax (the gross total, NOT the net/base amount). Look for "Celkom vrátane DPH", "Total with VAT", "Grand Total". Just the number.
+- currency: The 3-letter currency code (EUR, USD, CZK, GBP). Look for €, $, £ symbols or currency names.
 - vendor: Name of the company/store.
 - date: Date of the receipt/invoice (YYYY-MM-DD format if possible).
 
@@ -325,7 +334,7 @@ IMPORTANT: If you see multiple receipts (e.g., 2 separate receipts on different 
 IMPORTANT: Always use WITH-VAT amounts, not without-VAT amounts.
 
 Return ONLY valid JSON array, no other text. Example format:
-[{{"amount": 12.50, "vendor": "Store Name", "date": "2025-01-15"}}]
+[{{"amount": 12.50, "currency": "EUR", "vendor": "Store Name", "date": "2025-01-15"}}]
 
 If only one receipt, still return as array with one element.
 If no receipts found, return empty array: []
@@ -388,6 +397,11 @@ JSON response:"""
                 result["amount"] = Decimal(amt_str)
             except:
                 pass
+
+        if data.get("currency"):
+            currency = str(data["currency"]).upper().strip()
+            if len(currency) == 3:
+                result["currency"] = currency
 
         if data.get("vendor"):
             result["vendor"] = str(data["vendor"]).strip()

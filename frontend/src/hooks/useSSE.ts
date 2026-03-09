@@ -48,25 +48,33 @@ export function useSSE() {
             toast.info(data.message)
             break
 
-          case 'error':
+          case 'error': {
             // Dismiss any progress toast for this operation
-            const errorProgressId = toastIdsRef.current.get(`progress-${data.operation}`)
+            const errorProgressKey = `progress-${data.operation}`
+            const errorProgressId = toastIdsRef.current.get(errorProgressKey)
             if (errorProgressId) {
-              toast.dismiss(errorProgressId)
-              toastIdsRef.current.delete(`progress-${data.operation}`)
+              // Update the existing progress toast to error instead of creating new one
+              toast.error(data.message, { id: errorProgressId })
+              toastIdsRef.current.delete(errorProgressKey)
+            } else {
+              toast.error(data.message)
             }
-            toast.error(data.message)
             break
+          }
 
-          case 'success':
+          case 'success': {
             // Dismiss any progress toast for this operation
-            const successProgressId = toastIdsRef.current.get(`progress-${data.operation}`)
+            const progressKey = `progress-${data.operation}`
+            const successProgressId = toastIdsRef.current.get(progressKey)
             if (successProgressId) {
-              toast.dismiss(successProgressId)
-              toastIdsRef.current.delete(`progress-${data.operation}`)
+              // Update the existing progress toast to success instead of creating new one
+              toast.success(data.message, { id: successProgressId })
+              toastIdsRef.current.delete(progressKey)
+            } else {
+              toast.success(data.message)
             }
-            toast.success(data.message)
             break
+          }
         }
       } catch (e) {
         console.error('Failed to parse SSE event:', e)

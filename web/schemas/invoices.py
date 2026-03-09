@@ -11,6 +11,7 @@ class InvoiceBase(BaseModel):
     filename: str
     vendor: Optional[str] = None
     amount: Optional[Decimal] = None
+    currency: str = 'EUR'  # EUR, USD, CZK, etc.
     invoice_date: Optional[date] = None
     payment_type: Optional[str] = None  # wire/card/cash
     vs: Optional[str] = None
@@ -29,6 +30,7 @@ class InvoiceUpdate(BaseModel):
     filename: Optional[str] = None
     vendor: Optional[str] = None
     amount: Optional[Decimal] = None
+    currency: Optional[str] = None
     invoice_date: Optional[date] = None
     payment_type: Optional[str] = None
     vs: Optional[str] = None
@@ -85,7 +87,13 @@ class MatchSuggestion(BaseModel):
     counter_name: Optional[str] = None
     vs: Optional[str] = None
     note: Optional[str] = None
-    score: int  # 0-100
+    extracted_vendor: Optional[str] = None  # Clean vendor (LLM or regex extracted)
+    score: int  # Total 0-100
+    # Score breakdown
+    amount_score: int = 0      # 0-50
+    date_score: int = 0        # 0-30
+    vendor_score: int = 0      # 0-20
+    date_diff_days: Optional[int] = None
 
 
 class InvoiceSuggestionsResponse(BaseModel):
