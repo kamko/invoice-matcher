@@ -90,20 +90,6 @@ YYYY-MM-DD-NNN_type_vendor-slug.pdf
 - `type` - `card`, `wire`, `cash`, `sepa-debit`, `cod`
 - `vendor-slug` - Lowercase, hyphenated vendor name
 
-## Project Structure
-
-```
-├── frontend/          # React + Vite + TailwindCSS
-├── parsers/           # PDF, Fio API, LLM extractors
-├── web/
-│   ├── routers/       # FastAPI endpoints
-│   ├── services/      # Business logic
-│   ├── schemas/       # Pydantic models
-│   └── database/      # SQLAlchemy models
-├── Dockerfile
-└── docker-compose.yml
-```
-
 ## License
 
 MIT
