@@ -1,6 +1,6 @@
 services:
   invoice-matcher:
-    image: ghcr.io/kamko/invoice-matcher:master
+    build: .
     ports:
       - "8000:8000"
     volumes:
