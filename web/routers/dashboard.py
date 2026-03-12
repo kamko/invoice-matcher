@@ -100,15 +100,15 @@ def export_month(
     last_day = monthrange(year, mon)[1]
     end_date = datetime(year, mon, last_day).date()
 
-    # Get matched invoices for this month
+    # Get matched/cash invoices for this month
     invoices = db.query(Invoice).filter(
-        Invoice.status.in_(['matched', 'exported']),
+        Invoice.status.in_(['matched', 'exported', 'cash']),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date
     ).all()
 
     if not invoices:
-        raise HTTPException(status_code=404, detail="No matched invoices for this month")
+        raise HTTPException(status_code=404, detail="No matched/cash invoices for this month")
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -301,16 +301,16 @@ def copy_to_accountant_folder(
     last_day = monthrange(year, mon)[1]
     end_date = datetime(year, mon, last_day).date()
 
-    # Get matched (non-exported) invoices for this month
+    # Get matched/cash (non-exported) invoices for this month
     invoices = db.query(Invoice).filter(
-        Invoice.status == 'matched',
+        Invoice.status.in_(['matched', 'cash']),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
         Invoice.gdrive_file_id.isnot(None)
     ).all()
 
     if not invoices:
-        raise HTTPException(status_code=404, detail="No matched invoices to export for this month")
+        raise HTTPException(status_code=404, detail="No matched/cash invoices to export for this month")
 
     # Find or create month subfolder in target folder (YYYYMM format)
     month_folder_name = f"{year}{mon:02d}"

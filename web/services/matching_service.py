@@ -272,13 +272,20 @@ class MatchingService:
 
         Returns dict with counts of matches made at each tier.
         """
-        results = {'tier1_vs': 0, 'tier1_iban': 0, 'tier2_alias': 0}
+        results = {'tier1_vs': 0, 'tier1_iban': 0, 'tier2_alias': 0, 'cash': 0}
 
         unmatched_invoices = self.db.query(Invoice).filter(
             Invoice.status == 'unmatched'
         ).all()
 
         for invoice in unmatched_invoices:
+            # Cash invoices don't need bank transaction matching
+            if invoice.payment_type == 'cash':
+                invoice.status = 'cash'
+                self.db.commit()
+                results['cash'] += 1
+                continue
+
             # Tier 1: VS match
             match = self.auto_match_by_vs(invoice)
             if match:
