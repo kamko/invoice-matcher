@@ -68,14 +68,19 @@ def extract_qr_from_pdf(pdf_path: Path) -> list[str]:
                 pil_image = Image.open(io.BytesIO(img_data))
                 cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-                # Scale up for better detection
-                for scale in [2, 3]:
-                    scaled = cv2.resize(cv_image, None, fx=scale, fy=scale,
-                                       interpolation=cv2.INTER_CUBIC)
-                    data, _, _ = detector.detectAndDecode(scaled)
-                    if data:
-                        qr_codes.append(data)
-                        break
+                # Try original first (works better for high-res images)
+                data, _, _ = detector.detectAndDecode(cv_image)
+                if data:
+                    qr_codes.append(data)
+                else:
+                    # Fall back to scaling for low-res images
+                    for scale in [2, 3]:
+                        scaled = cv2.resize(cv_image, None, fx=scale, fy=scale,
+                                           interpolation=cv2.INTER_CUBIC)
+                        data, _, _ = detector.detectAndDecode(scaled)
+                        if data:
+                            qr_codes.append(data)
+                            break
             except Exception:
                 continue
 
@@ -87,13 +92,19 @@ def extract_qr_from_pdf(pdf_path: Path) -> list[str]:
                 pil_image = Image.open(io.BytesIO(img_data))
                 cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-                # Scale up
-                scaled = cv2.resize(cv_image, None, fx=2, fy=2,
-                                   interpolation=cv2.INTER_CUBIC)
-                data, _, _ = detector.detectAndDecode(scaled)
+                # Try original first (works better for high-res renders)
+                data, _, _ = detector.detectAndDecode(cv_image)
                 if data:
                     qr_codes.append(data)
                     break
+                else:
+                    # Scale up for low-res
+                    scaled = cv2.resize(cv_image, None, fx=2, fy=2,
+                                       interpolation=cv2.INTER_CUBIC)
+                    data, _, _ = detector.detectAndDecode(scaled)
+                    if data:
+                        qr_codes.append(data)
+                        break
 
     doc.close()
     return list(set(qr_codes))  # Deduplicate
