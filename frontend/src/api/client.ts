@@ -231,13 +231,14 @@ export function useInvoice(invoiceId: number | null) {
 export function useUploadInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount, gdriveFolderId }: {
+    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount, gdriveFolderId, skipAnalyze }: {
       file: File
       vendor?: string
       invoiceDate?: string
       paymentType?: string
       amount?: string
       gdriveFolderId: string  // Required - parent folder ID
+      skipAnalyze?: boolean
     }): Promise<Invoice> => {
       const formData = new FormData()
       formData.append('file', file)
@@ -246,6 +247,7 @@ export function useUploadInvoice() {
       if (invoiceDate) formData.append('invoice_date', invoiceDate)
       if (paymentType) formData.append('payment_type', paymentType)
       if (amount) formData.append('amount', amount)
+      if (skipAnalyze) formData.append('skip_analyze', 'true')
 
       const response = await fetch(`${API_BASE}/invoices/upload`, {
         method: 'POST',

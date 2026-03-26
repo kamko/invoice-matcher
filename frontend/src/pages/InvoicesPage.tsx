@@ -59,6 +59,7 @@ export function InvoicesPage() {
   const [uploadDate, setUploadDate] = useState('')
   const [uploadAmount, setUploadAmount] = useState('')
   const [uploadPaymentType, setUploadPaymentType] = useState('card')
+  const [uploadSkipAnalyze, setUploadSkipAnalyze] = useState(false)
   const [uploadAnalyzing, setUploadAnalyzing] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
@@ -159,6 +160,7 @@ export function InvoicesPage() {
         paymentType: uploadPaymentType || 'card',  // Default to card if empty
         amount: uploadAmount || undefined,
         gdriveFolderId: folderId,
+        skipAnalyze: uploadSkipAnalyze,
       })
       showSuccess('Invoice uploaded to Google Drive')
       setShowUploadModal(false)
@@ -177,6 +179,7 @@ export function InvoicesPage() {
     setUploadDate('')
     setUploadAmount('')
     setUploadPaymentType('card')
+    setUploadSkipAnalyze(false)
   }
 
   // Generate preview of the final filename
@@ -788,6 +791,20 @@ export function InvoicesPage() {
                 <div className="font-mono text-sm mt-1">{getPreviewFilename()}</div>
               </div>
             )}
+
+            {/* Skip analyze checkbox */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="skipAnalyze"
+                checked={uploadSkipAnalyze}
+                onChange={(e) => setUploadSkipAnalyze(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <Label htmlFor="skipAnalyze" className="text-sm font-normal cursor-pointer">
+                Skip PDF analysis (use manually entered values only)
+              </Label>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowUploadModal(false)} disabled={isUploading}>

@@ -148,6 +148,7 @@ async def upload_invoice(
     amount: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
+    skip_analyze: Optional[bool] = Form(False),  # Skip PDF analysis, use provided values
     db: Session = Depends(get_db)
 ):
     """Upload a PDF invoice to Google Drive and extract data.
@@ -172,11 +173,13 @@ async def upload_invoice(
     tmp_path.write_bytes(content)
 
     try:
-        # Parse the PDF
-        try:
-            parsed = parse_uploaded_pdf(tmp_path)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        # Parse the PDF (unless skip_analyze is set)
+        parsed = {}
+        if not skip_analyze:
+            try:
+                parsed = parse_uploaded_pdf(tmp_path)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         # Use provided values or fall back to parsed
         final_vendor = vendor or parsed.get('vendor')
