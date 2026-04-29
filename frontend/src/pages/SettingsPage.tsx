@@ -383,9 +383,9 @@ export function SettingsPage() {
               )}
             </div>
 
-            {/* Accountant Export Folder */}
+            {/* Accountant Export Root */}
             <div className="border-t pt-4 space-y-2">
-              <Label>Accountant Export Folder</Label>
+              <Label>Accountant Shared Root Folder</Label>
               <div className="flex gap-2">
                 <div className="flex-1 space-y-1">
                   <Input
@@ -419,7 +419,8 @@ export function SettingsPage() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Shared folder where matched invoices will be copied for your accountant
+                Shared root folder used for accountant offload. The app routes files into
+                `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`.
               </p>
             </div>
           </CardContent>

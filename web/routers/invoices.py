@@ -26,6 +26,18 @@ from web.routers.sse import send_progress, send_info, send_error, send_success
 from parsers.pdf_parser import parse_uploaded_pdf
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
+VALID_DOCUMENT_TYPES = {"invoice", "receipt", "other"}
+
+
+def _normalize_document_type(value: Optional[str]) -> str:
+    """Normalize document type to a supported value."""
+    if not value:
+        return "invoice"
+
+    normalized = value.strip().lower()
+    if normalized in VALID_DOCUMENT_TYPES:
+        return normalized
+    return "invoice"
 
 
 def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
@@ -40,6 +52,7 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         receipt_index=invoice.receipt_index,
         filename=invoice.filename,
         vendor=invoice.vendor,
+        document_type=_normalize_document_type(invoice.document_type),
         amount=invoice.amount,
         currency=invoice.currency or 'EUR',
         invoice_date=invoice.invoice_date,
@@ -58,6 +71,7 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
 def list_invoices(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM)"),
     status: Optional[str] = Query(None, description="Filter by status"),
+    document_type: Optional[str] = Query(None, description="Filter by document type"),
     db: Session = Depends(get_db)
 ):
     """List invoices with optional filters."""
@@ -77,6 +91,9 @@ def list_invoices(
 
     if status:
         query = query.filter(Invoice.status == status)
+
+    if document_type:
+        query = query.filter(Invoice.document_type == _normalize_document_type(document_type))
 
     invoices = query.order_by(Invoice.invoice_date.desc()).all()
 
@@ -119,6 +136,7 @@ async def analyze_pdf(file: UploadFile = File(...)):
             "success": True,
             "extracted": {
                 "vendor": parsed.get('vendor'),
+                "document_type": _normalize_document_type(parsed.get('document_type')),
                 "amount": str(parsed['amount']) if parsed.get('amount') else None,
                 "currency": parsed.get('currency', 'EUR'),
                 "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,
@@ -145,6 +163,7 @@ async def upload_invoice(
     vendor: Optional[str] = Form(None),
     invoice_date: Optional[str] = Form(None),
     payment_type: Optional[str] = Form(None),
+    document_type: Optional[str] = Form(None),
     amount: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
@@ -193,6 +212,7 @@ async def upload_invoice(
             raise HTTPException(status_code=400, detail="Could not determine invoice date")
 
         final_type = payment_type or parsed.get('payment_type', 'card')
+        final_document_type = _normalize_document_type(document_type or parsed.get('document_type'))
         final_currency = currency or parsed.get('currency', 'EUR')
         # Use provided amount or fall back to parsed
         final_amount = None
@@ -250,6 +270,7 @@ async def upload_invoice(
             receipt_index=0,
             filename=proper_filename,
             vendor=final_vendor,
+            document_type=final_document_type,
             amount=final_amount,
             currency=final_currency,
             invoice_date=final_date,
@@ -378,6 +399,7 @@ async def import_gdrive(
                 receipt_index=0,
                 filename=filename,
                 vendor=parsed.get('vendor'),
+                document_type=_normalize_document_type(parsed.get('document_type')),
                 amount=Decimal(str(parsed['amount'])) if parsed.get('amount') else None,
                 currency=parsed.get('currency', 'EUR'),
                 invoice_date=parsed.get('invoice_date'),
@@ -428,6 +450,8 @@ def update_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     update_data = update.model_dump(exclude_unset=True)
+    if "document_type" in update_data:
+        update_data["document_type"] = _normalize_document_type(update_data["document_type"])
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
@@ -545,6 +569,7 @@ def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
             "success": True,
             "extracted": {
                 "vendor": parsed.get('vendor'),
+                "document_type": _normalize_document_type(parsed.get('document_type')),
                 "amount": str(parsed['amount']) if parsed.get('amount') else None,
                 "currency": parsed.get('currency', 'EUR'),
                 "invoice_date": str(parsed['invoice_date']) if parsed.get('invoice_date') else None,

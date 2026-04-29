@@ -10,6 +10,58 @@ import pdfplumber
 
 from parsers.ekasa_parser import parse_ekasa_pdf
 
+
+def infer_document_type(
+    text: str,
+    filename: str,
+    payment_type: Optional[str] = None,
+    has_wire_fields: bool = False,
+    is_ekasa: bool = False,
+) -> str:
+    """Infer the accountant-facing document type."""
+    if is_ekasa:
+        return "receipt"
+
+    haystack = f"{filename}\n{text}".lower()
+
+    receipt_keywords = [
+        "receipt",
+        "blocek",
+        "bloček",
+        "pokladnicny doklad",
+        "pokladničný doklad",
+        "paragon",
+        "e-kasa",
+        "ekasa",
+    ]
+    other_keywords = [
+        "zmluva",
+        "contract",
+        "bank statement",
+        "výpis",
+        "vypis",
+        "statement",
+    ]
+    invoice_keywords = [
+        "invoice",
+        "faktura",
+        "faktúra",
+        "tax invoice",
+        "daňový doklad",
+        "danovy doklad",
+    ]
+
+    if any(keyword in haystack for keyword in receipt_keywords):
+        return "receipt"
+    if any(keyword in haystack for keyword in other_keywords):
+        return "other"
+    if has_wire_fields or any(keyword in haystack for keyword in invoice_keywords):
+        return "invoice"
+    if payment_type == "cash":
+        return "receipt"
+    return "invoice"
+
+
 def _normalize_amount(amount_str: str) -> Optional[Decimal]:
     """
     Normalize amount string to Decimal, handling various formats.
@@ -280,6 +332,7 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
     filename = pdf_path.name
     result = {
         'vendor': None,
+        'document_type': 'invoice',
         'amount': None,
         'currency': 'EUR',  # Default to EUR
         'invoice_date': None,
@@ -312,6 +365,7 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
                 if ekasa_receipt:
                     return {
                         'vendor': ekasa_receipt.vendor_name,
+                        'document_type': 'receipt',
                         'amount': ekasa_receipt.total_price,
                         'invoice_date': ekasa_receipt.issue_date.date(),
                         'payment_type': 'card',
@@ -321,6 +375,11 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
                     }
                 # No text and no e-kasa, but we might have filename date
                 if result['invoice_date']:
+                    result['document_type'] = infer_document_type(
+                        "",
+                        filename,
+                        payment_type=result['payment_type'],
+                    )
                     return result
                 raise ValueError(f"Cannot extract date from image PDF: {filename}")
 
@@ -370,6 +429,7 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
                         result['invoice_date'] = ekasa_receipt.issue_date.date()
                     if result['vendor'] is None:
                         result['vendor'] = ekasa_receipt.vendor_name
+                    result['document_type'] = 'receipt'
 
             # 4. If still no date, raise error
             if result['invoice_date'] is None:
@@ -378,6 +438,14 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
             # Detect wire transfer from content
             if result['iban'] or result['vs']:
                 result['payment_type'] = 'wire'
+
+            if result['document_type'] != 'receipt':
+                result['document_type'] = infer_document_type(
+                    text,
+                    filename,
+                    payment_type=result['payment_type'],
+                    has_wire_fields=bool(result['iban'] or result['vs']),
+                )
 
             return result
 
@@ -390,6 +458,7 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
             if ekasa_receipt:
                 return {
                     'vendor': ekasa_receipt.vendor_name,
+                    'document_type': 'receipt',
                     'amount': ekasa_receipt.total_price,
                     'invoice_date': ekasa_receipt.issue_date.date(),
                     'payment_type': 'card',
@@ -402,6 +471,12 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
 
         # If we have filename date, return with that
         if result['invoice_date']:
+            result['document_type'] = infer_document_type(
+                "",
+                filename,
+                payment_type=result['payment_type'],
+                has_wire_fields=bool(result['iban'] or result['vs']),
+            )
             return result
 
         raise ValueError(f"Failed to parse PDF {filename}: {e}")

@@ -46,9 +46,11 @@ export function InvoicesPage() {
   const params = new URLSearchParams(search)
   const initialMonth = params.get('month') || ''
   const initialStatus = params.get('status') || ''
+  const initialDocumentType = params.get('document_type') || ''
 
   const [month, setMonth] = useState(initialMonth)
   const [status, setStatus] = useState(initialStatus)
+  const [documentType, setDocumentType] = useState(initialDocumentType)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [showMatchModal, setShowMatchModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
@@ -56,6 +58,7 @@ export function InvoicesPage() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadVendor, setUploadVendor] = useState('')
+  const [uploadDocumentType, setUploadDocumentType] = useState('invoice')
   const [uploadDate, setUploadDate] = useState('')
   const [uploadAmount, setUploadAmount] = useState('')
   const [uploadPaymentType, setUploadPaymentType] = useState('card')
@@ -65,6 +68,7 @@ export function InvoicesPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [editFilename, setEditFilename] = useState('')
   const [editVendor, setEditVendor] = useState('')
+  const [editDocumentType, setEditDocumentType] = useState('invoice')
   const [editAmount, setEditAmount] = useState('')
   const [editDate, setEditDate] = useState('')
   const [editPaymentType, setEditPaymentType] = useState('')
@@ -74,6 +78,7 @@ export function InvoicesPage() {
   // Track parsed/suggested values from reanalyze
   const [parsedValues, setParsedValues] = useState<{
     vendor?: string
+    document_type?: string
     amount?: string
     currency?: string
     invoice_date?: string
@@ -83,7 +88,7 @@ export function InvoicesPage() {
   } | null>(null)
 
   const { data: dashboard } = useDashboard()
-  const { data, isLoading, refetch } = useInvoices(month || undefined, status || undefined)
+  const { data, isLoading, refetch } = useInvoices(month || undefined, status || undefined, documentType || undefined)
   const { data: suggestions } = useInvoiceSuggestions(
     showMatchModal ? selectedInvoice?.id ?? null : null
   )
@@ -156,6 +161,7 @@ export function InvoicesPage() {
       await uploadInvoice.mutateAsync({
         file: uploadFile,
         vendor: uploadVendor || undefined,
+        documentType: uploadDocumentType || undefined,
         invoiceDate: uploadDate || undefined,
         paymentType: uploadPaymentType || 'card',  // Default to card if empty
         amount: uploadAmount || undefined,
@@ -176,6 +182,7 @@ export function InvoicesPage() {
   const resetUploadForm = () => {
     setUploadFile(null)
     setUploadVendor('')
+    setUploadDocumentType('invoice')
     setUploadDate('')
     setUploadAmount('')
     setUploadPaymentType('card')
@@ -216,9 +223,10 @@ export function InvoicesPage() {
         const data = await response.json()
         // Check if we got any extracted data
         const extracted = data.extracted || {}
-        const hasData = extracted.vendor || extracted.amount || extracted.invoice_date || extracted.payment_type
+        const hasData = extracted.vendor || extracted.document_type || extracted.amount || extracted.invoice_date || extracted.payment_type
 
         if (extracted.vendor) setUploadVendor(extracted.vendor)
+        if (extracted.document_type) setUploadDocumentType(extracted.document_type)
         if (extracted.amount) setUploadAmount(extracted.amount)
         if (extracted.invoice_date) setUploadDate(extracted.invoice_date)
         if (extracted.payment_type) setUploadPaymentType(extracted.payment_type)
@@ -252,7 +260,7 @@ export function InvoicesPage() {
     try {
       const result = await reanalyzeInvoice.mutateAsync(selectedInvoice.id)
       const extracted = result.extracted || {}
-      const hasData = extracted.vendor || extracted.amount || extracted.invoice_date || extracted.payment_type
+      const hasData = extracted.vendor || extracted.document_type || extracted.amount || extracted.invoice_date || extracted.payment_type
 
       // Store parsed values for comparison UI
       setParsedValues(extracted)
@@ -260,6 +268,7 @@ export function InvoicesPage() {
       // Auto-fill empty fields, but don't overwrite existing values
       // User can click on the suggestion to apply it
       if (!editVendor && extracted.vendor) setEditVendor(extracted.vendor)
+      if (!editDocumentType && extracted.document_type) setEditDocumentType(extracted.document_type)
       if (!editAmount && extracted.amount) setEditAmount(extracted.amount)
       if (extracted.currency) setEditCurrency(extracted.currency) // Always update currency
       if (!editDate && extracted.invoice_date) setEditDate(extracted.invoice_date)
@@ -289,6 +298,7 @@ export function InvoicesPage() {
     const value = parsedValues[field]!
     switch (field) {
       case 'vendor': setEditVendor(value); break
+      case 'document_type': setEditDocumentType(value); break
       case 'amount': setEditAmount(value); break
       case 'invoice_date': setEditDate(value); break
       case 'payment_type': setEditPaymentType(value); break
@@ -322,6 +332,7 @@ export function InvoicesPage() {
     setSelectedInvoice(inv)
     setEditFilename(inv.filename || '')
     setEditVendor(inv.vendor || '')
+    setEditDocumentType(inv.document_type || 'invoice')
     setEditAmount(inv.amount || '')
     setEditCurrency(inv.currency || 'EUR')
     setEditDate(inv.invoice_date || '')
@@ -364,6 +375,7 @@ export function InvoicesPage() {
         invoiceId: selectedInvoice.id,
         filename: filenameChanged ? newFilename : undefined,
         vendor: editVendor || undefined,
+        document_type: editDocumentType || undefined,
         amount: editAmount || undefined,
         currency: editCurrency || undefined,
         invoice_date: editDate || undefined,
@@ -404,6 +416,17 @@ export function InvoicesPage() {
     }
   }
 
+  const getDocumentTypeBadge = (value?: string) => {
+    switch (value) {
+      case 'receipt':
+        return <Badge className="bg-amber-100 text-amber-800">Receipt</Badge>
+      case 'other':
+        return <Badge className="bg-slate-100 text-slate-800">Other</Badge>
+      default:
+        return <Badge className="bg-sky-100 text-sky-800">Invoice</Badge>
+    }
+  }
+
   const monthOptions = [
     { value: '', label: 'All months' },
     ...(dashboard?.available_months?.map((m: string) => ({ value: m, label: m })) || [])
@@ -415,6 +438,19 @@ export function InvoicesPage() {
     { value: 'matched', label: 'Matched' },
     { value: 'exported', label: 'Exported' },
     { value: 'cash', label: 'Cash' },
+  ]
+
+  const documentTypeOptions = [
+    { value: '', label: 'All document types' },
+    { value: 'invoice', label: 'Invoices' },
+    { value: 'receipt', label: 'Receipts' },
+    { value: 'other', label: 'Other' },
+  ]
+
+  const documentTypeInputOptions = [
+    { value: 'invoice', label: 'Invoice' },
+    { value: 'receipt', label: 'Receipt' },
+    { value: 'other', label: 'Other' },
   ]
 
   return (
@@ -430,7 +466,7 @@ export function InvoicesPage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex gap-4">
+          <div className="flex gap-4 flex-wrap">
             <div className="w-48">
               <Label>Month</Label>
               <Select
@@ -445,6 +481,14 @@ export function InvoicesPage() {
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
                 options={statusOptions}
+              />
+            </div>
+            <div className="w-48">
+              <Label>Document Type</Label>
+              <Select
+                value={documentType}
+                onChange={(e) => setDocumentType(e.target.value)}
+                options={documentTypeOptions}
               />
             </div>
           </div>
@@ -473,7 +517,8 @@ export function InvoicesPage() {
                   <TableHead>Filename</TableHead>
                   <TableHead>Vendor</TableHead>
                   <TableHead>Amount</TableHead>
-                  <TableHead>Type</TableHead>
+                  <TableHead>Document</TableHead>
+                  <TableHead>Payment</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -505,9 +550,8 @@ export function InvoicesPage() {
                         <span className="ml-1 text-xs text-orange-600 font-medium">{inv.currency}</span>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{inv.payment_type || 'card'}</Badge>
-                    </TableCell>
+                    <TableCell>{getDocumentTypeBadge(inv.document_type)}</TableCell>
+                    <TableCell><Badge variant="outline">{inv.payment_type || 'card'}</Badge></TableCell>
                     <TableCell>{getStatusBadge(inv.status)}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
@@ -566,9 +610,9 @@ export function InvoicesPage() {
                 ))}
                 {data?.invoices.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No invoices found
-                    </TableCell>
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                        No invoices found
+                      </TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -770,6 +814,17 @@ export function InvoicesPage() {
                 />
               </div>
               <div>
+                <Label>Document Type</Label>
+                <Select
+                  value={uploadDocumentType}
+                  onChange={(e) => setUploadDocumentType(e.target.value)}
+                  options={documentTypeInputOptions}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
                 <Label>Payment Type</Label>
                 <Select
                   value={uploadPaymentType}
@@ -782,6 +837,7 @@ export function InvoicesPage() {
                   ]}
                 />
               </div>
+              <div />
             </div>
 
             {/* Filename Preview */}
@@ -967,6 +1023,28 @@ export function InvoicesPage() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
+                  <Label>Document Type</Label>
+                  {hasSuggestion('document_type', editDocumentType) && (
+                    <button
+                      type="button"
+                      className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                      onClick={() => applySuggestion('document_type')}
+                    >
+                      Use: {parsedValues?.document_type}
+                    </button>
+                  )}
+                </div>
+                <Select
+                  value={editDocumentType}
+                  onChange={(e) => setEditDocumentType(e.target.value)}
+                  options={documentTypeInputOptions}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center gap-2">
                   <Label>Payment Type</Label>
                   {hasSuggestion('payment_type', editPaymentType) && (
                     <button
@@ -990,6 +1068,7 @@ export function InvoicesPage() {
                   ]}
                 />
               </div>
+              <div />
             </div>
 
             {editPaymentType === 'wire' && (

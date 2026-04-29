@@ -10,6 +10,7 @@ class InvoiceBase(BaseModel):
     """Base invoice schema."""
     filename: str
     vendor: Optional[str] = None
+    document_type: str = 'invoice'  # invoice/receipt/other
     amount: Optional[Decimal] = None
     currency: str = 'EUR'  # EUR, USD, CZK, etc.
     invoice_date: Optional[date] = None
@@ -29,6 +30,7 @@ class InvoiceUpdate(BaseModel):
     """Schema for updating an invoice."""
     filename: Optional[str] = None
     vendor: Optional[str] = None
+    document_type: Optional[str] = None
     amount: Optional[Decimal] = None
     currency: Optional[str] = None
     invoice_date: Optional[date] = None
