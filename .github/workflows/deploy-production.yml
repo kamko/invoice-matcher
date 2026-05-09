@@ -2,146 +2,31 @@ name: Deploy Production
 
 on:
   workflow_run:
-    workflows:
-      - Build and Push Docker Image
-    types:
-      - completed
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Docker image tag to deploy. Defaults to the triggering commit SHA.
-        required: false
-        type: string
-      force_redeploy:
-        description: Force the deployment in Coolify.
-        required: false
-        default: false
-        type: boolean
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
 
 jobs:
   deploy-production:
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'master'
-      )
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+
     runs-on: ubuntu-latest
+
     concurrency:
       group: production-deploy
       cancel-in-progress: false
-    permissions:
-      contents: read
 
     steps:
-      - name: Resolve deployment inputs
-        id: vars
-        env:
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
-          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          CURRENT_SHA: ${{ github.sha }}
-          FORCE_REDEPLOY_INPUT: ${{ inputs.force_redeploy }}
-        run: |
-          set -euo pipefail
-
-          if [ -n "${INPUT_IMAGE_TAG}" ]; then
-            deploy_tag="${INPUT_IMAGE_TAG}"
-          elif [ -n "${WORKFLOW_RUN_HEAD_SHA}" ]; then
-            deploy_tag="${WORKFLOW_RUN_HEAD_SHA}"
-          else
-            deploy_tag="${CURRENT_SHA}"
-          fi
-
-          force_redeploy="${FORCE_REDEPLOY_INPUT:-false}"
-
-          echo "deploy_tag=${deploy_tag}" >> "${GITHUB_OUTPUT}"
-          echo "force_redeploy=${force_redeploy}" >> "${GITHUB_OUTPUT}"
-          echo "Deploying image tag ${deploy_tag}"
-
-      - name: Validate Coolify configuration
+      - name: Deploy image tag to Coolify
         env:
           COOLIFY_API_BASE_URL: ${{ secrets.COOLIFY_API_BASE_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_APPLICATION_UUID: ${{ secrets.COOLIFY_APPLICATION_UUID }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          set -euo pipefail
-
-          for key in COOLIFY_API_BASE_URL COOLIFY_TOKEN COOLIFY_APPLICATION_UUID; do
-            if [ -z "${!key}" ]; then
-              echo "::error::Missing required secret ${key}"
-              exit 1
-            fi
-          done
-
-          case "${COOLIFY_API_BASE_URL}" in
-            */api/v1) ;;
-            *)
-              echo "::warning::COOLIFY_API_BASE_URL should usually include the /api/v1 suffix."
-              ;;
-          esac
-
-      - name: Update Coolify IMAGE_TAG variable
-        env:
-          COOLIFY_API_BASE_URL: ${{ secrets.COOLIFY_API_BASE_URL }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_APPLICATION_UUID: ${{ secrets.COOLIFY_APPLICATION_UUID }}
-          DEPLOY_TAG: ${{ steps.vars.outputs.deploy_tag }}
-        run: |
-          set -euo pipefail
-
-          payload="$(python - <<'PY'
-import json
-import os
-
-print(json.dumps({
-    "key": "IMAGE_TAG",
-    "value": os.environ["DEPLOY_TAG"],
-    "is_preview": False,
-    "is_literal": False,
-    "is_multiline": False,
-    "is_shown_once": False,
-}))
-PY
-)"
-
           curl --silent --show-error --fail-with-body \
-            --request PATCH \
-            --url "${COOLIFY_API_BASE_URL%/}/applications/${COOLIFY_APPLICATION_UUID}/envs" \
-            --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data "${payload}"
-
-      - name: Trigger Coolify deployment
-        id: deploy
-        env:
-          COOLIFY_API_BASE_URL: ${{ secrets.COOLIFY_API_BASE_URL }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_APPLICATION_UUID: ${{ secrets.COOLIFY_APPLICATION_UUID }}
-          FORCE_REDEPLOY: ${{ steps.vars.outputs.force_redeploy }}
-        run: |
-          set -euo pipefail
-
-          response="$(
-            curl --silent --show-error --fail-with-body \
             --request POST \
-            --url "${COOLIFY_API_BASE_URL%/}/applications/${COOLIFY_APPLICATION_UUID}/start?force=${FORCE_REDEPLOY}" \
-            --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
-            --header "Content-Type: application/json"
-          )"
-
-          deployment_uuid="$(RESPONSE="${response}" python - <<'PY'
-import json
-import os
-
-data = json.loads(os.environ["RESPONSE"])
-print(data.get("deployment_uuid", ""))
-PY
-)"
-
-          if [ -n "${deployment_uuid}" ]; then
-            echo "deployment_uuid=${deployment_uuid}" >> "${GITHUB_OUTPUT}"
-            echo "Coolify deployment queued: ${deployment_uuid}"
-          else
-            echo "Coolify deployment request accepted."
-          fi
+            --url "${COOLIFY_API_BASE_URL%/}/deploy?uuid=${COOLIFY_APPLICATION_UUID}&docker_tag=${IMAGE_TAG}" \
+            --header "Authorization: Bearer ${COOLIFY_TOKEN}"
