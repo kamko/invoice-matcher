@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSettings, useSetSetting, useGDriveStatus, useGDriveAuthUrl, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, showSuccess, showApiError } from '../api/client'
+import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveAuthUrl, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, showSuccess, showApiError } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -13,13 +13,15 @@ import {
 } from '../components/ui/dialog'
 import { Checkbox } from '../components/ui/checkbox'
 import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, LogOut, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check } from 'lucide-react'
-
-const FIO_TOKEN_KEY = 'fio_token'
+import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLegacyFioToken, hasPersistentVaultPassword, rememberVaultPassword } from '../lib/crypto'
 
 export function SettingsPage() {
   const { data: settings, isLoading, refetch } = useSettings()
   const setSetting = useSetSetting()
   const { data: gdriveStatus, refetch: refetchGDrive } = useGDriveStatus()
+  const { data: fioVault } = useFioVault()
+  const saveFioVault = useSaveFioVault()
+  const deleteFioVault = useDeleteFioVault()
   const getAuthUrl = useGDriveAuthUrl()
   const { data: appConfig } = useAppConfig()
   const importGDrive = useImportGDrive()
@@ -31,6 +33,10 @@ export function SettingsPage() {
 
   const [fioToken, setFioToken] = useState('')
   const [showToken, setShowToken] = useState(false)
+  const [vaultPassword, setVaultPassword] = useState('')
+  const [showVaultPassword, setShowVaultPassword] = useState(false)
+  const [persistVaultPassword, setPersistVaultPassword] = useState(hasPersistentVaultPassword())
+  const [hasLegacyToken, setHasLegacyToken] = useState(false)
   const [invoiceFolder, setInvoiceFolder] = useState('')
   const [invoiceFolderName, setInvoiceFolderName] = useState('')
   const [accountantFolder, setAccountantFolder] = useState('')
@@ -87,7 +93,11 @@ export function SettingsPage() {
 
   const handleDisconnectGDrive = useCallback(async () => {
     try {
-      await fetch('/api/gdrive/disconnect', { method: 'POST' })
+      const response = await authFetch('/gdrive/disconnect', { method: 'POST' })
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
       refetchGDrive()
       showSuccess('Disconnected from Google Drive')
     } catch (error) {
@@ -98,10 +108,10 @@ export function SettingsPage() {
   // Initialize form values from localStorage and settings
   useEffect(() => {
     if (!initialized) {
-      // Load Fio token from localStorage first (backward compatibility)
-      const storedToken = localStorage.getItem(FIO_TOKEN_KEY)
-      if (storedToken) {
-        setFioToken(storedToken)
+      const legacyToken = getLegacyFioToken()
+      if (legacyToken && !fioVault?.configured) {
+        setFioToken(legacyToken)
+        setHasLegacyToken(true)
       }
 
       if (settings) {
@@ -113,11 +123,44 @@ export function SettingsPage() {
 
       setInitialized(true)
     }
-  }, [settings, initialized])
+  }, [settings, fioVault, initialized])
 
-  const handleSaveFioToken = () => {
-    localStorage.setItem(FIO_TOKEN_KEY, fioToken)
-    showSuccess('Fio token saved to browser storage')
+  const handleSaveFioToken = async () => {
+    if (!fioToken.trim()) {
+      showApiError(new Error('Enter a Fio token first'), 'Save encrypted Fio token')
+      return
+    }
+
+    if (!vaultPassword) {
+      showApiError(new Error('Enter a vault password first'), 'Save encrypted Fio token')
+      return
+    }
+
+    try {
+      const payload = await encryptSecret(fioToken.trim(), vaultPassword)
+      await saveFioVault.mutateAsync(payload)
+      rememberVaultPassword(vaultPassword, persistVaultPassword)
+      clearLegacyFioToken()
+      setHasLegacyToken(false)
+      setFioToken('')
+      showSuccess('Encrypted Fio token saved')
+    } catch (error) {
+      showApiError(error, 'Save encrypted Fio token')
+    }
+  }
+
+  const handleDeleteFioToken = async () => {
+    try {
+      await deleteFioVault.mutateAsync()
+      clearLegacyFioToken()
+      clearRememberedVaultPassword()
+      setFioToken('')
+      setVaultPassword('')
+      setHasLegacyToken(false)
+      showSuccess('Encrypted Fio token deleted')
+    } catch (error) {
+      showApiError(error, 'Delete encrypted Fio token')
+    }
   }
 
   const handleSaveInvoiceFolder = async () => {
@@ -248,6 +291,12 @@ export function SettingsPage() {
             <CardTitle>Fio Bank API</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Encrypted vault status</span>
+              <span className={fioVault?.configured ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
+                {fioVault?.configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
             <div className="space-y-2">
               <Label>API Token</Label>
               <div className="flex gap-2">
@@ -268,13 +317,54 @@ export function SettingsPage() {
                     {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
-                <Button onClick={handleSaveFioToken} disabled={setSetting.isPending}>
+                <Button onClick={handleSaveFioToken} disabled={saveFioVault.isPending}>
                   <Save className="h-4 w-4 mr-2" />
-                  Save
+                  {fioVault?.configured ? 'Update' : 'Save'}
                 </Button>
+                {fioVault?.configured && (
+                  <Button variant="outline" onClick={handleDeleteFioToken} disabled={deleteFioVault.isPending}>
+                    Delete
+                  </Button>
+                )}
               </div>
               <p className="text-xs text-muted-foreground">
+                {hasLegacyToken
+                  ? 'Legacy browser-stored token detected and ready to migrate into the encrypted vault.'
+                  : 'The server stores only the encrypted token blob.'}
+              </p>
+              <p className="text-xs text-muted-foreground">
                 Get your token from Fio Internetbanking &gt; Settings &gt; API
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Vault Password</Label>
+              <div className="relative">
+                <Input
+                  type={showVaultPassword ? 'text' : 'password'}
+                  value={vaultPassword}
+                  onChange={(e) => setVaultPassword(e.target.value)}
+                  placeholder="Used only in your browser to encrypt/decrypt the token"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
+                  onClick={() => setShowVaultPassword(!showVaultPassword)}
+                >
+                  {showVaultPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={persistVaultPassword}
+                  onCheckedChange={(checked) => setPersistVaultPassword(checked === true)}
+                />
+                <span>Remember password on this device (less secure)</span>
+              </label>
+              <p className="text-xs text-muted-foreground">
+                If unchecked, the password is remembered only for the current browser tab.
               </p>
             </div>
           </CardContent>

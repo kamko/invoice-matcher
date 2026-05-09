@@ -7,34 +7,37 @@ from typing import AsyncGenerator, Optional
 from queue import Queue
 from threading import Lock
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+
+from web.auth import get_current_user
+from web.database.models import User
 
 router = APIRouter(prefix="/api/sse", tags=["sse"])
 
-# Global event queue for broadcasting messages
-_event_queues: list[Queue] = []
+# Global event queues per user for broadcasting messages
+_event_queues: dict[int, list[Queue]] = {}
 _queue_lock = Lock()
 
 
-def broadcast_event(event_type: str, data: dict):
-    """Broadcast an event to all connected SSE clients."""
+def broadcast_event(user_id: int, event_type: str, data: dict):
+    """Broadcast an event to all connected SSE clients for one user."""
     event_data = {
         "type": event_type,
         "timestamp": datetime.utcnow().isoformat(),
         **data
     }
     with _queue_lock:
-        for queue in _event_queues:
+        for queue in _event_queues.get(user_id, []):
             try:
                 queue.put_nowait(event_data)
             except:
                 pass
 
 
-def send_progress(operation: str, current: int, total: int, message: str = ""):
+def send_progress(user_id: int, operation: str, current: int, total: int, message: str = ""):
     """Send a progress update."""
-    broadcast_event("progress", {
+    broadcast_event(user_id, "progress", {
         "operation": operation,
         "current": current,
         "total": total,
@@ -43,36 +46,36 @@ def send_progress(operation: str, current: int, total: int, message: str = ""):
     })
 
 
-def send_info(message: str, operation: str = ""):
+def send_info(user_id: int, message: str, operation: str = ""):
     """Send an info message."""
-    broadcast_event("info", {
+    broadcast_event(user_id, "info", {
         "operation": operation,
         "message": message,
     })
 
 
-def send_error(message: str, operation: str = ""):
+def send_error(user_id: int, message: str, operation: str = ""):
     """Send an error message."""
-    broadcast_event("error", {
+    broadcast_event(user_id, "error", {
         "operation": operation,
         "message": message,
     })
 
 
-def send_success(message: str, operation: str = ""):
+def send_success(user_id: int, message: str, operation: str = ""):
     """Send a success message."""
-    broadcast_event("success", {
+    broadcast_event(user_id, "success", {
         "operation": operation,
         "message": message,
     })
 
 
-async def event_generator() -> AsyncGenerator[str, None]:
+async def event_generator(user_id: int) -> AsyncGenerator[str, None]:
     """Generate SSE events for a single client."""
     queue = Queue()
 
     with _queue_lock:
-        _event_queues.append(queue)
+        _event_queues.setdefault(user_id, []).append(queue)
 
     try:
         # Send initial connection event
@@ -91,15 +94,18 @@ async def event_generator() -> AsyncGenerator[str, None]:
                 break
     finally:
         with _queue_lock:
-            if queue in _event_queues:
-                _event_queues.remove(queue)
+            queues = _event_queues.get(user_id, [])
+            if queue in queues:
+                queues.remove(queue)
+            if not queues and user_id in _event_queues:
+                del _event_queues[user_id]
 
 
 @router.get("/events")
-async def sse_events():
+async def sse_events(user: User = Depends(get_current_user)):
     """SSE endpoint for real-time events."""
     return StreamingResponse(
-        event_generator(),
+        event_generator(user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1,9 +1,6 @@
 """Service for Google Drive integration."""
 
 import io
-import secrets
-import hashlib
-import base64
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -29,12 +26,10 @@ class GDriveService:
         "https://www.googleapis.com/auth/drive",
     ]
 
-    def __init__(self):
-        self._credentials: Optional[Credentials] = None
+    def __init__(self, credentials: Optional["Credentials"] = None):
+        self._credentials: Optional[Credentials] = credentials
         self._download_dir = DATA_DIR / "downloads"
         self._download_dir.mkdir(exist_ok=True)
-        # Store the flow object to preserve PKCE code_verifier between auth_url and callback
-        self._pending_flow: Optional[Flow] = None
 
     @property
     def is_available(self) -> bool:
@@ -48,14 +43,14 @@ class GDriveService:
                 "web": {
                     "client_id": settings.google_client_id,
                     "client_secret": settings.google_client_secret,
-                    "redirect_uris": [settings.google_redirect_uri],
+                    "redirect_uris": [settings.google_drive_redirect_uri],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
                 }
             },
             scopes=self.SCOPES,
         )
-        flow.redirect_uri = settings.google_redirect_uri
+        flow.redirect_uri = settings.google_drive_redirect_uri
         return flow
 
     def get_auth_url(self, state: Optional[str] = None) -> str:

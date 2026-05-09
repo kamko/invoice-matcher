@@ -1,5 +1,5 @@
 import { Link } from 'wouter'
-import { useDashboard, useFetchTransactions, useMonthlySummary, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useFetchTransactions, useMonthlySummary, useFioVault, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useState } from 'react'
@@ -12,8 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
-
-const FIO_TOKEN_KEY = 'fio_token'
+import { unlockStoredSecret } from '../lib/crypto'
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('sk-SK', {
@@ -25,19 +24,25 @@ function formatCurrency(amount: number) {
 export function DashboardPage() {
   const { data: dashboard, isLoading, refetch } = useDashboard()
   const { data: monthlySummary } = useMonthlySummary()
+  const { data: fioVault } = useFioVault()
   const fetchTransactions = useFetchTransactions()
   const [isFetching, setIsFetching] = useState(false)
 
   const handleFetchTransactions = async () => {
-    // Get Fio token from localStorage (user's browser storage)
-    const fioToken = localStorage.getItem(FIO_TOKEN_KEY)
-    if (!fioToken) {
+    if (!fioVault?.configured || !fioVault.ciphertext || !fioVault.nonce || !fioVault.salt || !fioVault.kdf || !fioVault.kdf_params) {
       showApiError(new Error('Fio token not configured. Go to Settings to add it.'), 'Fetch')
       return
     }
 
     setIsFetching(true)
     try {
+      const fioToken = await unlockStoredSecret({
+        ciphertext: fioVault.ciphertext,
+        nonce: fioVault.nonce,
+        salt: fioVault.salt,
+        kdf: fioVault.kdf,
+        kdf_params: fioVault.kdf_params,
+      })
       // Fetch last ~1 month (from 1st of previous month)
       const today = new Date()
       const fromDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)

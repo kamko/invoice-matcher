@@ -7,8 +7,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from web.auth import get_current_user
 from web.database import get_db
-from web.database.models import Transaction, Invoice, KnownTransaction
+from web.database.models import Transaction, Invoice, KnownTransaction, User
 from web.schemas.transactions import (
     TransactionResponse,
     TransactionListResponse,
@@ -151,10 +152,11 @@ def update_transaction(
 @router.post("/fetch", response_model=FetchTransactionsResponse)
 def fetch_transactions(
     request: FetchTransactionsRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Fetch transactions from Fio Bank."""
-    send_info("Connecting to Fio Bank API...", "fetch_transactions")
+    send_info(user.id, "Connecting to Fio Bank API...", "fetch_transactions")
 
     try:
         raw_transactions = fetch_transactions_from_api(
@@ -167,11 +169,11 @@ def fetch_transactions(
         error_msg = str(e)
         if request.fio_token and request.fio_token in error_msg:
             error_msg = error_msg.replace(request.fio_token, "***TOKEN***")
-        send_error(f"Fio API error: {error_msg}", "fetch_transactions")
+        send_error(user.id, f"Fio API error: {error_msg}", "fetch_transactions")
         raise HTTPException(status_code=502, detail=f"Fio API error: {error_msg}")
 
     fetched = len(raw_transactions)
-    send_info(f"Fetched {fetched} transactions from bank", "fetch_transactions")
+    send_info(user.id, f"Fetched {fetched} transactions from bank", "fetch_transactions")
 
     new_count = 0
     existing_count = 0
@@ -180,7 +182,7 @@ def fetch_transactions(
     matching = MatchingService(db)
 
     for i, raw in enumerate(raw_transactions):
-        send_progress("fetch_transactions", i + 1, fetched, f"Processing transaction {i + 1}/{fetched}...")
+        send_progress(user.id, "fetch_transactions", i + 1, fetched, f"Processing transaction {i + 1}/{fetched}...")
 
         # Check if transaction already exists
         existing = db.query(Transaction).filter(
@@ -246,10 +248,10 @@ def fetch_transactions(
     db.commit()
 
     # Run auto-matching on invoices
-    send_info("Running auto-matching...", "fetch_transactions")
+    send_info(user.id, "Running auto-matching...", "fetch_transactions")
     matching.run_auto_matching()
 
-    send_success(f"Fetched {new_count} new transactions, {known_matched} matched by rules", "fetch_transactions")
+    send_success(user.id, f"Fetched {new_count} new transactions, {known_matched} matched by rules", "fetch_transactions")
 
     return FetchTransactionsResponse(
         fetched=fetched,

@@ -10,8 +10,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from web.auth import get_current_user
 from web.database import get_db
-from web.database.models import Invoice, Transaction, PDFCache
+from web.database.models import Invoice, Transaction, PDFCache, User
+from web.routers.gdrive import get_gdrive_service_for_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 ACCOUNTANT_FOLDER_NAMES = {
@@ -99,6 +101,7 @@ def get_dashboard(db: Session = Depends(get_db)):
 def export_month(
     year_month: str,
     mark_exported: bool = Query(False, description="Mark invoices as exported"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Download a ZIP of matched invoices for a month."""
@@ -125,6 +128,11 @@ def export_month(
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
+    gdrive_service = None
+    try:
+        gdrive_service = get_gdrive_service_for_user(db, user)
+    except HTTPException:
+        gdrive_service = None
 
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         for invoice in invoices:
@@ -142,9 +150,8 @@ def export_month(
             else:
                 # Try to download from GDrive
                 try:
-                    from web.routers.gdrive import _gdrive_service
-                    if _gdrive_service:
-                        content = _gdrive_service.download_file(invoice.gdrive_file_id)
+                    if gdrive_service:
+                        content = gdrive_service.download_file(invoice.gdrive_file_id)
                         zf.writestr(invoice.filename, content)
 
                         # Cache it
@@ -295,13 +302,11 @@ def copy_to_accountant_folder(
     year_month: str,
     folder_id: str = Query(..., description="Target GDrive folder ID"),
     mark_exported: bool = Query(False, description="Mark invoices as exported"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Copy matched invoices to a shared GDrive folder (e.g., accountant folder)."""
-    from web.routers.gdrive import _gdrive_service
-
-    if not _gdrive_service or not _gdrive_service._credentials:
-        raise HTTPException(status_code=400, detail="Google Drive not connected")
+    gdrive_service = get_gdrive_service_for_user(db, user)
 
     # Parse month
     try:
@@ -339,7 +344,7 @@ def copy_to_accountant_folder(
         target_subfolder_id = target_folder_ids.get(target_folder_name)
         if target_subfolder_id is None:
             try:
-                target_subfolder_id = _gdrive_service.find_or_create_subfolder(folder_id, target_folder_name)
+                target_subfolder_id = gdrive_service.find_or_create_subfolder(folder_id, target_folder_name)
             except Exception as e:
                 errors.append(f"{invoice.filename}: failed to resolve {target_folder_name} ({e})")
                 continue
@@ -347,7 +352,7 @@ def copy_to_accountant_folder(
             target_folder_ids[target_folder_name] = target_subfolder_id
             try:
                 existing_files_by_folder[target_folder_name] = set(
-                    _gdrive_service.list_files_in_folder(target_subfolder_id)
+                    gdrive_service.list_files_in_folder(target_subfolder_id)
                 )
             except Exception:
                 existing_files_by_folder[target_folder_name] = set()
@@ -360,7 +365,7 @@ def copy_to_accountant_folder(
             continue
 
         try:
-            _gdrive_service.copy_file(
+            gdrive_service.copy_file(
                 invoice.gdrive_file_id,
                 target_subfolder_id,
                 invoice.filename  # Keep same filename
