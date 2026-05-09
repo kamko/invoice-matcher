@@ -1,88 +1,25 @@
 """Router for Google Drive integration."""
 
-import base64
-import hashlib
-import json
-import secrets
-import urllib.parse
-import urllib.request
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from google.oauth2.credentials import Credentials
 from sqlalchemy.orm import Session
 
-from web.auth import (
-    GDRIVE_FLOW_COOKIE,
-    GDRIVE_FLOW_SALT,
-    clear_temporary_flow_cookie,
-    get_current_user,
-    load_temporary_flow_cookie,
-    set_temporary_flow_cookie,
-)
-from web.config import settings
+from web.auth import get_current_user
 from web.database import get_db
 from web.database.models import GoogleDriveConnection, PDFCache, Invoice, User
 from web.schemas.gdrive import (
-    GDriveAuthUrl,
     GDriveFolderList,
     GDriveDownloadRequest,
     GDriveDownloadResponse,
     GDriveUploadResponse,
 )
-from web.security import decrypt_json, encrypt_json
+from web.security import decrypt_json
 from web.services.gdrive_service import GDriveService
 
 router = APIRouter(prefix="/api/gdrive", tags=["gdrive"])
 _gdrive_service = GDriveService()
-
-
-def _code_challenge(verifier: str) -> str:
-    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
-
-
-def _build_google_drive_auth_url(state: str, verifier: str) -> str:
-    params = {
-        "client_id": settings.google_client_id,
-        "redirect_uri": settings.google_drive_redirect_uri,
-        "response_type": "code",
-        "scope": " ".join(GDriveService.SCOPES),
-        "access_type": "offline",
-        "include_granted_scopes": "true",
-        "prompt": "consent",
-        "state": state,
-        "code_challenge": _code_challenge(verifier),
-        "code_challenge_method": "S256",
-    }
-    return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
-
-
-def _exchange_drive_code(code: str, code_verifier: str) -> dict:
-    payload = urllib.parse.urlencode(
-        {
-            "code": code,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_drive_redirect_uri,
-            "grant_type": "authorization_code",
-            "code_verifier": code_verifier,
-        }
-    ).encode("utf-8")
-
-    request = urllib.request.Request(
-        "https://oauth2.googleapis.com/token",
-        data=payload,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Google Drive token exchange failed: {exc}") from exc
 
 
 def get_gdrive_credentials_for_user(db: Session, user: User) -> Optional[Credentials]:
@@ -133,111 +70,6 @@ def disconnect_gdrive(
         db.delete(connection)
         db.commit()
     return {"success": True, "message": "Disconnected from Google Drive"}
-
-
-@router.get("/auth-url", response_model=GDriveAuthUrl)
-def get_auth_url(
-    request: Request,
-    user: User = Depends(get_current_user),
-):
-    """Get the OAuth authorization URL for Google Drive."""
-    if not _gdrive_service.is_available:
-        raise HTTPException(
-            status_code=503,
-            detail="Google Drive integration not configured"
-        )
-
-    verifier = secrets.token_urlsafe(48)
-    state = secrets.token_urlsafe(24)
-    response = JSONResponse({"auth_url": _build_google_drive_auth_url(state, verifier)})
-    set_temporary_flow_cookie(
-        response,
-        GDRIVE_FLOW_COOKIE,
-        GDRIVE_FLOW_SALT,
-        {
-            "state": state,
-            "code_verifier": verifier,
-            "user_id": user.id,
-            "origin": request.headers.get("origin") or request.base_url.scheme + "://" + request.base_url.netloc,
-        },
-    )
-    return response
-
-
-@router.get("/callback")
-def handle_callback(
-    request: Request,
-    code: str,
-    state: Optional[str] = None,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Handle OAuth callback from Google."""
-    if not _gdrive_service.is_available:
-        raise HTTPException(
-            status_code=503,
-            detail="Google Drive integration not configured"
-        )
-
-    flow = load_temporary_flow_cookie(request, GDRIVE_FLOW_COOKIE, GDRIVE_FLOW_SALT)
-    if flow.get("user_id") != user.id:
-        raise HTTPException(status_code=400, detail="Google Drive auth flow does not belong to this user")
-    if state != flow.get("state"):
-        raise HTTPException(status_code=400, detail="State mismatch during Google Drive authentication")
-
-    tokens = _exchange_drive_code(code, flow["code_verifier"])
-    creds_payload = {
-        "token": tokens.get("access_token"),
-        "refresh_token": tokens.get("refresh_token"),
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "client_id": settings.google_client_id,
-        "client_secret": settings.google_client_secret,
-        "scopes": GDriveService.SCOPES,
-    }
-
-    connection = db.query(GoogleDriveConnection).filter(
-        GoogleDriveConnection.user_id == user.id
-    ).first()
-
-    if not connection:
-        connection = GoogleDriveConnection(
-            user_id=user.id,
-            email=user.email,
-            encrypted_credentials=encrypt_json(creds_payload),
-            scopes=" ".join(GDriveService.SCOPES),
-        )
-        db.add(connection)
-    else:
-        if not creds_payload["refresh_token"]:
-            existing_payload = decrypt_json(connection.encrypted_credentials)
-            creds_payload["refresh_token"] = existing_payload.get("refresh_token")
-        connection.email = user.email
-        connection.encrypted_credentials = encrypt_json(creds_payload)
-        connection.scopes = " ".join(GDriveService.SCOPES)
-
-    db.commit()
-    opener_origin = flow.get("origin", request.base_url.scheme + "://" + request.base_url.netloc)
-
-    response = HTMLResponse(
-        """
-        <!DOCTYPE html>
-        <html>
-        <head><title>Google Drive Connected</title></head>
-        <body>
-            <p>Google Drive connected successfully! This window will close...</p>
-            <script>
-                if (window.opener) {
-                    window.opener.postMessage({ type: 'gdrive-connected' }, __TARGET_ORIGIN__);
-                }
-                window.close();
-            </script>
-        </body>
-        </html>
-        """
-        .replace("__TARGET_ORIGIN__", json.dumps(opener_origin))
-    )
-    clear_temporary_flow_cookie(response, GDRIVE_FLOW_COOKIE)
-    return response
 
 
 @router.get("/folders", response_model=GDriveFolderList)

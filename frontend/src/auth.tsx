@@ -120,10 +120,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <p className="text-sm text-muted-foreground mb-6">
-            This instance is protected with Google login. Only approved accounts can use the API and connected Google Drive features.
+            This instance uses one Google sign-in flow for both app access and Google Drive access. Only approved accounts can use it.
           </p>
           <Button className="w-full" onClick={auth.login}>
-            Sign In With Google
+            Sign In With Google And Drive
           </Button>
         </div>
       </div>

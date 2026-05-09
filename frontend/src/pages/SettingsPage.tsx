@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveAuthUrl, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, showSuccess, showApiError } from '../api/client'
+import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, showSuccess, showApiError } from '../api/client'
+import { useAuth } from '../auth'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -12,17 +13,17 @@ import {
   DialogFooter,
 } from '../components/ui/dialog'
 import { Checkbox } from '../components/ui/checkbox'
-import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, LogOut, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check } from 'lucide-react'
+import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check } from 'lucide-react'
 import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLegacyFioToken, hasPersistentVaultPassword, rememberVaultPassword } from '../lib/crypto'
 
 export function SettingsPage() {
+  const auth = useAuth()
   const { data: settings, isLoading, refetch } = useSettings()
   const setSetting = useSetSetting()
   const { data: gdriveStatus, refetch: refetchGDrive } = useGDriveStatus()
   const { data: fioVault } = useFioVault()
   const saveFioVault = useSaveFioVault()
   const deleteFioVault = useDeleteFioVault()
-  const getAuthUrl = useGDriveAuthUrl()
   const { data: appConfig } = useAppConfig()
   const importGDrive = useImportGDrive()
   const getFolderInfo = useGDriveFolderInfo()
@@ -61,35 +62,17 @@ export function SettingsPage() {
     showImportWizard ? invoiceFolder : ''
   )
 
-  // Listen for GDrive OAuth callback
+  // Refresh Drive state when the combined Google sign-in flow completes
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'gdrive-connected') {
+      if (event.data?.type === 'auth-complete') {
         refetchGDrive()
-        showSuccess('Google Drive connected successfully')
+        showSuccess('Google access refreshed successfully')
       }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [refetchGDrive])
-
-  const handleConnectGDrive = useCallback(async () => {
-    try {
-      const { auth_url } = await getAuthUrl.mutateAsync()
-      // Open OAuth popup
-      const width = 600
-      const height = 700
-      const left = window.screenX + (window.outerWidth - width) / 2
-      const top = window.screenY + (window.outerHeight - height) / 2
-      window.open(
-        auth_url,
-        'gdrive-oauth',
-        `width=${width},height=${height},left=${left},top=${top}`
-      )
-    } catch (error) {
-      showApiError(error, 'Connect to Google Drive')
-    }
-  }, [getAuthUrl])
 
   const handleDisconnectGDrive = useCallback(async () => {
     try {
@@ -385,29 +368,35 @@ export function SettingsPage() {
                     <>
                       <div className="flex items-center gap-2 text-green-600">
                         <Cloud className="h-5 w-5" />
-                        <span className="font-medium">Connected</span>
+                        <span className="font-medium">Connected through Google sign-in</span>
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={handleDisconnectGDrive}
+                        onClick={auth.login}
                       >
-                        <LogOut className="h-4 w-4 mr-2" />
-                        Disconnect
+                        <Cloud className="h-4 w-4 mr-2" />
+                        Refresh Google Access
                       </Button>
                     </>
                   ) : (
                     <>
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <CloudOff className="h-5 w-5" />
-                        <span>Not connected</span>
+                        <span>Google Drive access is missing</span>
                       </div>
                       <Button
-                        onClick={handleConnectGDrive}
-                        disabled={getAuthUrl.isPending}
+                        onClick={auth.login}
                       >
                         <Cloud className="h-4 w-4 mr-2" />
-                        Connect Google Drive
+                        Sign In Again
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDisconnectGDrive}
+                      >
+                        Clear Stored Access
                       </Button>
                     </>
                   )
@@ -417,6 +406,9 @@ export function SettingsPage() {
                   </div>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">
+                App access and Google Drive access are granted together in one Google sign-in flow.
+              </p>
             </div>
 
             <div className="border-t pt-4 space-y-2">

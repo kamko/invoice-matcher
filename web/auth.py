@@ -14,8 +14,6 @@ from web.database.models import AppSettings, User, UserSession
 SESSION_COOKIE_SALT = "invoice-matcher-session"
 AUTH_FLOW_COOKIE = "invoice_matcher_auth_flow"
 AUTH_FLOW_SALT = "invoice-matcher-auth-flow"
-GDRIVE_FLOW_COOKIE = "invoice_matcher_gdrive_flow"
-GDRIVE_FLOW_SALT = "invoice-matcher-gdrive-flow"
 LEGACY_SETTING_KEYS = {
     "invoice_parent_folder_id",
     "invoice_parent_folder_name",

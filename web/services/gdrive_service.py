@@ -10,7 +10,6 @@ from web.schemas.gdrive import GDriveFolder
 # Google Drive imports (will be available after installing dependencies)
 try:
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
     GDRIVE_AVAILABLE = True
@@ -35,73 +34,6 @@ class GDriveService:
     def is_available(self) -> bool:
         """Check if Google Drive integration is available."""
         return GDRIVE_AVAILABLE and bool(settings.google_client_id)
-
-    def _create_flow(self) -> Flow:
-        """Create a new OAuth flow."""
-        flow = Flow.from_client_config(
-            {
-                "web": {
-                    "client_id": settings.google_client_id,
-                    "client_secret": settings.google_client_secret,
-                    "redirect_uris": [settings.google_drive_redirect_uri],
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                }
-            },
-            scopes=self.SCOPES,
-        )
-        flow.redirect_uri = settings.google_drive_redirect_uri
-        return flow
-
-    def get_auth_url(self, state: Optional[str] = None) -> str:
-        """Get the OAuth authorization URL."""
-        if not GDRIVE_AVAILABLE:
-            raise RuntimeError("Google Drive libraries not installed")
-
-        # Create and store the flow - it contains PKCE code_verifier internally
-        self._pending_flow = self._create_flow()
-
-        auth_url, _ = self._pending_flow.authorization_url(
-            access_type="offline",
-            state=state,
-            prompt="consent",  # Force consent to get fresh scopes
-        )
-
-        return auth_url
-
-    def handle_callback(self, code: str) -> Credentials:
-        """Handle OAuth callback and get credentials."""
-        if not GDRIVE_AVAILABLE:
-            raise RuntimeError("Google Drive libraries not installed")
-
-        if self._pending_flow is None:
-            raise RuntimeError("No pending OAuth flow - please start authentication again")
-
-        try:
-            # Use the stored flow which has the PKCE code_verifier
-            self._pending_flow.fetch_token(code=code)
-            self._credentials = self._pending_flow.credentials
-        except Exception as e:
-            # If scope mismatch, clear and retry
-            if "Scope has changed" in str(e):
-                self._credentials = None
-                self._pending_flow = None
-                raise RuntimeError("Please re-authenticate with Google Drive (scopes changed)")
-            raise
-        finally:
-            # Clear the pending flow after use
-            self._pending_flow = None
-
-        return self._credentials
-
-    def clear_credentials(self) -> None:
-        """Clear stored credentials (for re-authentication)."""
-        self._credentials = None
-        self._pending_flow = None
-
-    def set_credentials(self, credentials: Credentials) -> None:
-        """Set credentials for API calls."""
-        self._credentials = credentials
 
     def list_folders(self, parent_id: str = "root") -> List[GDriveFolder]:
         """List folders in Google Drive."""

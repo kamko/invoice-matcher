@@ -12,10 +12,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/invoice_matcher.db"
 
-    # Google Drive OAuth
+    # Google OAuth
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_drive_redirect_uri: str = "http://localhost:8000/api/gdrive/callback"
     google_auth_redirect_uri: str = "http://localhost:8000/api/auth/callback"
 
     # CORS

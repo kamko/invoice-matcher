@@ -763,12 +763,6 @@ export function useDeleteFioVault() {
   })
 }
 
-export function useGDriveAuthUrl() {
-  return useMutation({
-    mutationFn: () => fetchJson<{ auth_url: string }>('/gdrive/auth-url'),
-  })
-}
-
 export function useGDriveFolderInfo() {
   return useMutation({
     mutationFn: (folderId: string) =>
