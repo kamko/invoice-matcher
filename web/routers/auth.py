@@ -36,6 +36,35 @@ from web.services.gdrive_service import GDriveService
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _configured_app_origin() -> str:
+    """Derive the public app origin from the configured auth callback."""
+    parsed = urllib.parse.urlsplit(settings.google_auth_redirect_uri)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return ""
+
+
+def _request_origin(request: Request) -> str:
+    """Best-effort origin for popup handoff behind proxies and HTTPS terminators."""
+    origin = request.headers.get("origin")
+    if origin:
+        return origin
+
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_proto and forwarded_host:
+        proto = forwarded_proto.split(",")[0].strip()
+        host = forwarded_host.split(",")[0].strip()
+        if proto and host:
+            return f"{proto}://{host}"
+
+    configured_origin = _configured_app_origin()
+    if configured_origin:
+        return configured_origin
+
+    return request.base_url.scheme + "://" + request.base_url.netloc
+
+
 def _code_challenge(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
@@ -152,7 +181,7 @@ def login_with_google(request: Request, popup: bool = True):
             "nonce": nonce,
             "code_verifier": verifier,
             "popup": popup,
-            "origin": request.headers.get("origin") or request.base_url.scheme + "://" + request.base_url.netloc,
+            "origin": _request_origin(request),
         },
     )
     return response
@@ -215,7 +244,7 @@ def auth_callback(request: Request, code: str, state: str, db: Session = Depends
     session = create_session(db, user, request)
 
     popup = bool(flow.get("popup", True))
-    opener_origin = flow.get("origin", request.base_url.scheme + "://" + request.base_url.netloc)
+    opener_origin = flow.get("origin") or _request_origin(request)
     if popup:
         response = HTMLResponse(
             """
@@ -226,9 +255,14 @@ def auth_callback(request: Request, code: str, state: str, db: Session = Depends
               <p>Login successful. You can close this window.</p>
               <script>
                 if (window.opener) {
-                  window.opener.postMessage({ type: 'auth-complete' }, __TARGET_ORIGIN__);
+                  try {
+                    window.opener.postMessage({ type: 'auth-complete' }, __TARGET_ORIGIN__);
+                    window.opener.focus();
+                  } catch (error) {
+                    console.error('Failed to notify opener about auth completion', error);
+                  }
                 }
-                window.close();
+                setTimeout(() => window.close(), 150);
               </script>
             </body>
             </html>
