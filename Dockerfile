@@ -13,22 +13,25 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install system dependencies for OpenCV and pyzbar
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
     libzbar0 \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN pip install --no-cache-dir uv
 
 # Copy Python project files
-COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --no-install-project
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY parsers/ ./parsers/
 COPY web/ ./web/
+
+# Install the local project into the environment during the image build
+RUN uv sync --frozen --no-dev
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
@@ -41,4 +44,4 @@ ENV DATA_DIR=/app/data
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "8000"]
