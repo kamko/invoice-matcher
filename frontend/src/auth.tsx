@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from 'react'
+import { createContext, useContext, useEffect, useRef } from 'react'
 import { Loader2, Lock } from 'lucide-react'
 import { useAuthLogin, useAuthSession, useLogout, setCsrfToken, showApiError } from './api/client'
 import { Button } from './components/ui/button'
@@ -19,6 +19,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const authQuery = useAuthSession()
   const loginMutation = useAuthLogin()
   const logoutMutation = useLogout()
+  const loginPopupRef = useRef<Window | null>(null)
+  const loginPollRef = useRef<number | null>(null)
+
+  const stopLoginPolling = () => {
+    if (loginPollRef.current !== null) {
+      window.clearInterval(loginPollRef.current)
+      loginPollRef.current = null
+    }
+  }
+
+  const refreshAuthState = () => {
+    authQuery.refetch()
+  }
 
   useEffect(() => {
     setCsrfToken(authQuery.data?.authenticated ? authQuery.data.csrf_token ?? null : null)
@@ -27,21 +40,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'auth-complete') {
-        authQuery.refetch()
+        stopLoginPolling()
+        refreshAuthState()
       }
     }
 
     const handleUnauthorized = () => {
-      authQuery.refetch()
+      refreshAuthState()
+    }
+
+    const handleWindowFocus = () => {
+      if (loginPopupRef.current && !loginPopupRef.current.closed) {
+        return
+      }
+      if (!authQuery.data?.authenticated) {
+        refreshAuthState()
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        handleWindowFocus()
+      }
     }
 
     window.addEventListener('message', handleMessage)
     window.addEventListener('auth:unauthorized', handleUnauthorized)
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
+      stopLoginPolling()
       window.removeEventListener('message', handleMessage)
       window.removeEventListener('auth:unauthorized', handleUnauthorized)
+      window.removeEventListener('focus', handleWindowFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [authQuery])
+  }, [authQuery.data?.authenticated, authQuery.refetch])
 
   const login = async () => {
     try {
@@ -50,11 +84,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const height = 720
       const left = window.screenX + (window.outerWidth - width) / 2
       const top = window.screenY + (window.outerHeight - height) / 2
-      window.open(
+      const popup = window.open(
         auth_url,
         'google-login',
         `width=${width},height=${height},left=${left},top=${top}`
       )
+      if (!popup) {
+        throw new Error('Popup blocked by browser')
+      }
+
+      loginPopupRef.current = popup
+      stopLoginPolling()
+      loginPollRef.current = window.setInterval(() => {
+        if (!loginPopupRef.current) {
+          stopLoginPolling()
+          return
+        }
+        if (loginPopupRef.current.closed) {
+          loginPopupRef.current = null
+          stopLoginPolling()
+          refreshAuthState()
+        }
+      }, 500)
     } catch (error) {
       showApiError(error, 'Sign in with Google')
     }
