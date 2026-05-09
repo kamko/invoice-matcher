@@ -8,6 +8,7 @@ import {
   useMarkKnown,
   useDashboard,
   useFetchTransactions,
+  useFioVault,
   showApiError,
   showSuccess,
   Transaction,
@@ -36,8 +37,7 @@ import {
 } from '../components/ui/dialog'
 import { Checkbox } from '../components/ui/checkbox'
 import { Check, FileText, Ban, RefreshCw } from 'lucide-react'
-
-const FIO_TOKEN_KEY = 'fio_token'
+import { unlockStoredSecret } from '../lib/crypto'
 
 export function TransactionsPage() {
   const search = useSearch()
@@ -59,6 +59,7 @@ export function TransactionsPage() {
   const [skipRuleType, setSkipRuleType] = useState('vendor')
 
   const { data: dashboard } = useDashboard()
+  const { data: fioVault } = useFioVault()
   const fetchTransactions = useFetchTransactions()
   const { data, isLoading, refetch } = useTransactions(month || undefined, status || undefined)
   const { data: suggestions } = useTransactionSuggestions(
@@ -70,13 +71,19 @@ export function TransactionsPage() {
   const markKnown = useMarkKnown()
 
   const handleFetchTransactions = async () => {
-    const fioToken = localStorage.getItem(FIO_TOKEN_KEY)
-    if (!fioToken) {
+    if (!fioVault?.configured || !fioVault.ciphertext || !fioVault.nonce || !fioVault.salt || !fioVault.kdf || !fioVault.kdf_params) {
       showApiError(new Error('Fio token not configured. Go to Settings to add it.'), 'Fetch')
       return
     }
     setIsFetching(true)
     try {
+      const fioToken = await unlockStoredSecret({
+        ciphertext: fioVault.ciphertext,
+        nonce: fioVault.nonce,
+        salt: fioVault.salt,
+        kdf: fioVault.kdf,
+        kdf_params: fioVault.kdf_params,
+      })
       const today = new Date()
       const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       const result = await fetchTransactions.mutateAsync({

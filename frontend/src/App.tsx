@@ -6,6 +6,8 @@ import { InvoicesPage } from './pages/InvoicesPage'
 import { ExportPage } from './pages/ExportPage'
 import { RulesPage } from './pages/RulesPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { AuthGate, useAuth } from './auth'
+import { Button } from './components/ui/button'
 import { cn } from './lib/utils'
 import { useSSE } from './hooks/useSSE'
 
@@ -30,6 +32,8 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
 }
 
 function AppContent() {
+  const auth = useAuth()
+
   // Connect to SSE for real-time updates
   useSSE()
 
@@ -57,6 +61,15 @@ function AppContent() {
               <NavLink href="/rules">Rules</NavLink>
               <NavLink href="/settings">Settings</NavLink>
             </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <div className="text-sm font-medium">{auth.fullName || auth.email}</div>
+              <div className="text-xs text-muted-foreground">{auth.email}</div>
+            </div>
+            <Button variant="outline" size="sm" onClick={auth.logout}>
+              Sign Out
+            </Button>
           </div>
         </div>
       </header>
@@ -86,7 +99,11 @@ function AppContent() {
 }
 
 function App() {
-  return <AppContent />
+  return (
+    <AuthGate>
+      <AppContent />
+    </AuthGate>
+  )
 }
 
 export default App

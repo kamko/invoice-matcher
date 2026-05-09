@@ -2,14 +2,47 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 const API_BASE = '/api'
+let csrfToken: string | null = null
 
-async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+export function setCsrfToken(token: string | null) {
+  csrfToken = token
+}
+
+function dispatchUnauthorized() {
+  window.dispatchEvent(new Event('auth:unauthorized'))
+}
+
+export async function authFetch(url: string, options?: RequestInit): Promise<Response> {
+  const method = (options?.method || 'GET').toUpperCase()
+  const headers = new Headers(options?.headers)
+
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
+
   const response = await fetch(`${API_BASE}${url}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    credentials: 'same-origin',
+    headers,
+  })
+
+  if (response.status === 401) {
+    dispatchUnauthorized()
+  }
+
+  return response
+}
+
+async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers = new Headers(options?.headers)
+  const hasFormData = options?.body instanceof FormData
+  if (!hasFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const response = await authFetch(url, {
+    ...options,
+    headers,
   })
 
   if (!response.ok) {
@@ -39,6 +72,19 @@ export function showSuccess(message: string) {
 // ============================================================================
 // Types
 // ============================================================================
+
+export interface AuthUser {
+  id: number
+  email: string
+  full_name?: string
+  picture_url?: string
+}
+
+export interface AuthSession {
+  authenticated: boolean
+  csrf_token?: string
+  user?: AuthUser
+}
 
 export interface Invoice {
   id: number
@@ -144,6 +190,61 @@ export interface KnownTransaction {
   is_active: boolean
   created_at: string
   updated_at?: string
+}
+
+export interface EncryptedSecretPayload {
+  configured: boolean
+  ciphertext?: string
+  nonce?: string
+  salt?: string
+  kdf?: 'argon2id'
+  kdf_params?: {
+    iterations: number
+    memorySize: number
+    parallelism: number
+    hashLength: number
+  }
+  updated_at?: string
+}
+
+// ============================================================================
+// Auth Hooks
+// ============================================================================
+
+export function useAuthSession() {
+  return useQuery({
+    queryKey: ['auth-session'],
+    retry: false,
+    queryFn: async (): Promise<AuthSession> => {
+      const response = await authFetch('/auth/me')
+      if (response.status === 401) {
+        return { authenticated: false }
+      }
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(error.detail || `HTTP ${response.status}`)
+      }
+
+      return response.json()
+    },
+  })
+}
+
+export function useAuthLogin() {
+  return useMutation({
+    mutationFn: () => fetchJson<{ auth_url: string }>('/auth/login?popup=true'),
+  })
+}
+
+export function useLogout() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => fetchJson<{ success: boolean }>('/auth/logout', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auth-session'] })
+    },
+  })
 }
 
 // ============================================================================
@@ -253,7 +354,7 @@ export function useUploadInvoice() {
       if (amount) formData.append('amount', amount)
       if (skipAnalyze) formData.append('skip_analyze', 'true')
 
-      const response = await fetch(`${API_BASE}/invoices/upload`, {
+      const response = await authFetch('/invoices/upload', {
         method: 'POST',
         body: formData,
       })
@@ -602,7 +703,7 @@ export function useRenameGDriveFile() {
       formData.append('file_id', fileId)
       formData.append('new_filename', newFilename)
 
-      const response = await fetch(`${API_BASE}/gdrive/rename`, {
+      const response = await authFetch('/gdrive/rename', {
         method: 'POST',
         body: formData,
       })
@@ -620,9 +721,45 @@ export function useRenameGDriveFile() {
   })
 }
 
-export function useGDriveAuthUrl() {
+export function useFioVault() {
+  return useQuery({
+    queryKey: ['fio-vault'],
+    queryFn: () => fetchJson<EncryptedSecretPayload>('/secrets/fio'),
+  })
+}
+
+export function useSaveFioVault() {
+  const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => fetchJson<{ auth_url: string }>('/gdrive/auth-url'),
+    mutationFn: (data: {
+      ciphertext: string
+      nonce: string
+      salt: string
+      kdf: 'argon2id'
+      kdf_params: {
+        iterations: number
+        memorySize: number
+        parallelism: number
+        hashLength: number
+      }
+    }) =>
+      fetchJson<EncryptedSecretPayload>('/secrets/fio', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fio-vault'] })
+    },
+  })
+}
+
+export function useDeleteFioVault() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => fetchJson<{ success: boolean }>('/secrets/fio', { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['fio-vault'] })
+    },
   })
 }
 

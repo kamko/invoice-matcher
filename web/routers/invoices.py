@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
+from web.auth import get_current_user
 from web.database import get_db
-from web.database.models import Invoice, Transaction, PDFCache
+from web.database.models import Invoice, Transaction, PDFCache, User
+from web.routers.gdrive import get_gdrive_service_for_user
 from web.schemas.invoices import (
     InvoiceResponse,
     InvoiceUpdate,
@@ -168,6 +170,7 @@ async def upload_invoice(
     currency: Optional[str] = Form(None),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
     skip_analyze: Optional[bool] = Form(False),  # Skip PDF analysis, use provided values
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Upload a PDF invoice to Google Drive and extract data.
@@ -177,10 +180,7 @@ async def upload_invoice(
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    # Verify GDrive is authenticated
-    from web.routers.gdrive import _gdrive_service
-    if not _gdrive_service or not _gdrive_service._credentials:
-        raise HTTPException(status_code=400, detail="Google Drive not connected. Please authenticate first.")
+    service = get_gdrive_service_for_user(db, user)
 
     # Save to temp file for parsing (use original filename for date extraction)
     content = await file.read()
@@ -225,7 +225,7 @@ async def upload_invoice(
         # Find or create month subfolder (YYYYMM format)
         month_folder_name = final_date.strftime('%Y%m')
         try:
-            target_folder_id = _gdrive_service.find_or_create_subfolder(gdrive_folder_id, month_folder_name)
+            target_folder_id = service.find_or_create_subfolder(gdrive_folder_id, month_folder_name)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to create month folder: {e}")
 
@@ -249,7 +249,7 @@ async def upload_invoice(
 
         # Upload to GDrive (to the month subfolder) with proper filename
         try:
-            gdrive_file_id = _gdrive_service.upload_pdf(target_folder_id, proper_filename, content)
+            gdrive_file_id = service.upload_pdf(target_folder_id, proper_filename, content)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to upload to Google Drive: {e}")
 
@@ -303,15 +303,14 @@ async def upload_invoice(
 @router.get("/import-gdrive/subfolders")
 def list_import_subfolders(
     folder_id: str = Query(..., description="Parent folder ID"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """List subfolders for import wizard."""
-    from web.routers.gdrive import _gdrive_service
-
-    if not _gdrive_service or not _gdrive_service._credentials:
-        raise HTTPException(status_code=503, detail="GDrive not connected")
+    service = get_gdrive_service_for_user(db, user)
 
     try:
-        folders = _gdrive_service.list_folders(folder_id)
+        folders = service.list_folders(folder_id)
         return {
             "folders": [{"id": f.id, "name": f.name} for f in folders]
         }
@@ -322,29 +321,26 @@ def list_import_subfolders(
 @router.post("/import-gdrive")
 async def import_gdrive(
     request: ImportGDriveRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Import invoices from a GDrive folder (single folder, no recursion)."""
-    from web.routers.gdrive import _gdrive_service
-
-    if not _gdrive_service:
-        send_error("GDrive service not available", "import_gdrive")
-        raise HTTPException(status_code=503, detail="GDrive service not available")
+    service = get_gdrive_service_for_user(db, user)
 
     folder_id = request.folder_id
-    send_info("Listing files from Google Drive...", "import_gdrive")
+    send_info(user.id, "Listing files from Google Drive...", "import_gdrive")
     # Only import from the specified folder, not recursively
-    files = _gdrive_service.list_pdfs(folder_id, recursive=False)
+    files = service.list_pdfs(folder_id, recursive=False)
 
     total_files = len(files)
-    send_info(f"Found {total_files} PDF files", "import_gdrive")
+    send_info(user.id, f"Found {total_files} PDF files", "import_gdrive")
 
     imported = 0
     skipped = 0
     errors = 0
 
     for i, file_info in enumerate(files):
-        send_progress("import_gdrive", i + 1, total_files, f"Processing {file_info['name']}")
+        send_progress(user.id, "import_gdrive", i + 1, total_files, f"Processing {file_info['name']}")
         gdrive_id = file_info['id']
         filename = file_info['name']
 
@@ -360,7 +356,7 @@ async def import_gdrive(
 
         # Download and parse
         try:
-            content = _gdrive_service.download_file(gdrive_id)
+            content = service.download_file(gdrive_id)
 
             # Cache the PDF
             cache_entry = PDFCache(
@@ -382,7 +378,7 @@ async def import_gdrive(
             try:
                 parsed = parse_uploaded_pdf(tmp_path)
             except ValueError as e:
-                send_error(f"Error parsing {filename}: {e}", "import_gdrive")
+                send_error(user.id, f"Error parsing {filename}: {e}", "import_gdrive")
                 errors += 1
                 tmp_path.unlink(missing_ok=True)
                 os.rmdir(temp_dir)
@@ -415,19 +411,19 @@ async def import_gdrive(
             imported += 1
 
         except Exception as e:
-            send_error(f"Error importing {filename}: {e}", "import_gdrive")
+            send_error(user.id, f"Error importing {filename}: {e}", "import_gdrive")
             errors += 1
             continue
 
     db.commit()
 
     # Run auto-matching on new invoices
-    send_info("Running auto-matching...", "import_gdrive")
+    send_info(user.id, "Running auto-matching...", "import_gdrive")
     matching = MatchingService(db)
     match_results = matching.run_auto_matching()
     auto_matched = sum(match_results.values())
 
-    send_success(f"Imported {imported} invoices, skipped {skipped}, {errors} errors, {auto_matched} auto-matched", "import_gdrive")
+    send_success(user.id, f"Imported {imported} invoices, skipped {skipped}, {errors} errors, {auto_matched} auto-matched", "import_gdrive")
 
     return {
         "success": True,
@@ -461,7 +457,11 @@ def update_invoice(
 
 
 @router.delete("/{invoice_id}")
-def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
+def delete_invoice(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Delete an invoice and its PDF from Google Drive."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
@@ -470,15 +470,10 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
     # Delete from GDrive first
     gdrive_deleted = False
     if invoice.gdrive_file_id:
-        from web.routers.gdrive import _gdrive_service
-        if not _gdrive_service or not _gdrive_service._credentials:
-            raise HTTPException(
-                status_code=400,
-                detail="Google Drive not connected. Cannot delete invoice without deleting the PDF from GDrive."
-            )
+        service = get_gdrive_service_for_user(db, user)
 
         try:
-            _gdrive_service.delete_file(invoice.gdrive_file_id)
+            service.delete_file(invoice.gdrive_file_id)
             gdrive_deleted = True
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete from Google Drive: {e}")
@@ -618,7 +613,11 @@ def get_invoice_suggestions(invoice_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{invoice_id}/pdf")
-def get_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
+def get_invoice_pdf(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Download the PDF for an invoice."""
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
@@ -642,12 +641,10 @@ def get_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
         )
 
     # Download from GDrive if not in cache
-    from web.routers.gdrive import _gdrive_service
-    if not _gdrive_service:
-        raise HTTPException(status_code=503, detail="GDrive service not available")
+    service = get_gdrive_service_for_user(db, user)
 
     try:
-        content = _gdrive_service.download_file(invoice.gdrive_file_id)
+        content = service.download_file(invoice.gdrive_file_id)
 
         # Cache it
         cache_entry = PDFCache(

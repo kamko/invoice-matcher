@@ -4,8 +4,10 @@ Match bank transactions with invoice PDFs. Simple 1:1 matching with automatic le
 
 ## Features
 
+- **Google Login Protection** - All API endpoints are protected by one Google sign-in flow that also grants Drive access
 - **Google Drive Integration** - Import invoice PDFs from Drive, auto-organize by month
-- **Fio Bank API** - Fetch transactions directly from Fio Bank
+- **Client-Side Encrypted Fio Vault** - The Fio token is encrypted in the browser before being stored on the server
+- **Fio Bank API** - Fetch transactions directly from Fio Bank on demand
 - **LLM-Powered Parsing** - Extract vendor, amount, date, VS, IBAN from PDFs using OpenRouter
 - **E-kasa Receipt Parsing** - Extract data from Slovak receipts via QR code
 - **Auto-Matching** - Match by VS, IBAN+amount, or learned vendor aliases
@@ -22,6 +24,9 @@ Match bank transactions with invoice PDFs. Simple 1:1 matching with automatic le
 cat > .env << EOF
 GOOGLE_CLIENT_ID=your-client-id
 GOOGLE_CLIENT_SECRET=your-secret
+GOOGLE_AUTH_REDIRECT_URI=http://localhost:8000/api/auth/callback
+SECRET_KEY=replace-me
+ALLOWED_EMAIL_ADDRESSES=you@example.com
 OPENROUTER_API_KEY=your-key
 OPENROUTER_MODEL=google/gemini-2.0-flash-001
 EOF
@@ -34,6 +39,8 @@ docker compose -f docker-compose.build.yml up -d
 ```
 
 Access at http://localhost:8000
+
+The app now requires Google sign-in before any API access.
 
 ### Development Setup
 
@@ -58,6 +65,13 @@ npm run dev  # Port 5173
    ```
 3. Data is persisted in the `invoice-data` volume
 
+## Security Notes
+
+- All `/api/*` endpoints require authentication except the login bootstrap and health check.
+- App sessions are stored server-side and issued through `HttpOnly` cookies with CSRF protection for mutating requests.
+- The Fio token is encrypted client-side with Argon2id + AES-GCM before being stored, so the database only contains ciphertext.
+- Google Drive credentials are created during the same Google sign-in flow and stored per user instead of in global in-memory state.
+
 ## Pages
 
 - **Dashboard** - Summary stats, monthly income/expense breakdown, fetch transactions
@@ -65,7 +79,7 @@ npm run dev  # Port 5173
 - **Invoices** - Upload, import from GDrive, edit, match to transactions
 - **Export** - Download ZIP or copy to accountant folder by month
 - **Rules** - Manage known transaction rules for auto-skip
-- **Settings** - Fio token, GDrive connection, folder configuration
+- **Settings** - Fio token, Google access status, folder configuration
 
 ## Matching Logic
 

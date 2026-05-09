@@ -21,6 +21,89 @@ class AppSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class User(Base):
+    """Authenticated application user."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_sub = Column(String(255), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=True)
+    picture_url = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class UserSession(Base):
+    """Server-side session for authenticated users."""
+
+    __tablename__ = "user_sessions"
+
+    session_id = Column(String(128), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    csrf_token = Column(String(128), nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    user_agent = Column(Text, nullable=True)
+    ip_address = Column(String(255), nullable=True)
+    data = Column(JSON, nullable=True)
+
+
+class UserSetting(Base):
+    """Per-user application settings."""
+
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    key = Column(String(100), nullable=False)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'key', name='uq_user_setting_key'),
+    )
+
+
+class UserSecret(Base):
+    """Client-side encrypted secret payload stored server-side."""
+
+    __tablename__ = "user_secrets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    secret_type = Column(String(50), nullable=False)
+    ciphertext = Column(Text, nullable=False)
+    nonce = Column(String(255), nullable=False)
+    salt = Column(String(255), nullable=False)
+    kdf = Column(String(50), nullable=False)
+    kdf_params = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'secret_type', name='uq_user_secret_type'),
+    )
+
+
+class GoogleDriveConnection(Base):
+    """Stored Google Drive credentials for one user."""
+
+    __tablename__ = "google_drive_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=True)
+    encrypted_credentials = Column(Text, nullable=False)
+    scopes = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Invoice(Base):
     """Invoices uploaded from GDrive or manually."""
 

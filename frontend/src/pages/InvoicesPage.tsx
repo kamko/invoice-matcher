@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useSearch } from 'wouter'
 import {
+  authFetch,
   useInvoices,
   useInvoiceSuggestions,
   useMatchInvoice,
@@ -214,7 +215,7 @@ export function InvoicesPage() {
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await fetch('/api/invoices/analyze', {
+      const response = await authFetch('/invoices/analyze', {
         method: 'POST',
         body: formData,
       })
