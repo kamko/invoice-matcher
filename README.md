@@ -65,6 +65,12 @@ npm run dev  # Port 5173
    ```
 3. Data is persisted in the `invoice-data` volume
 
+### Coolify Production
+
+- Production image tag is controlled by `IMAGE_TAG` and defaults to `master`
+- The GitHub Actions workflow `.github/workflows/deploy-production.yml` updates Coolify's `IMAGE_TAG` variable to the newly built image tag and then triggers a deployment
+- In Coolify, make sure the application uses this repository's `docker-compose.yml` or the equivalent image reference `ghcr.io/kamko/invoice-matcher:${IMAGE_TAG}`
+
 ## Security Notes
 
 - All `/api/*` endpoints require authentication except the login bootstrap and health check.
