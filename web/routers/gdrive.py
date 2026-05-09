@@ -144,7 +144,7 @@ def download_pdfs(
     service = get_gdrive_service_for_user(db, user)
 
     try:
-        download_path, files, _ = service.download_pdfs(request.folder_id, db)
+        download_path, files, _ = service.download_pdfs(request.folder_id, db, user_id=user.id)
         return GDriveDownloadResponse(
             success=True,
             download_path=str(download_path),
@@ -217,13 +217,17 @@ def rename_file(
 
         old_filename = None
 
-        cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+        cached = db.query(PDFCache).filter(
+            PDFCache.gdrive_file_id == file_id,
+            PDFCache.user_id == user.id,
+        ).first()
         if cached:
             old_filename = cached.filename
             cached.filename = new_filename
 
         invoices = db.query(Invoice).filter(
-            Invoice.gdrive_file_id == file_id
+            Invoice.gdrive_file_id == file_id,
+            Invoice.user_id == user.id,
         ).all()
         for invoice in invoices:
             invoice.filename = new_filename

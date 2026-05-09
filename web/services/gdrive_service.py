@@ -309,7 +309,13 @@ class GDriveService:
 
         return all_pdfs
 
-    def download_pdfs(self, folder_id: str, db=None, force_refresh: bool = False) -> Tuple[Path, List[str], Dict[str, str]]:
+    def download_pdfs(
+        self,
+        folder_id: str,
+        db=None,
+        force_refresh: bool = False,
+        user_id: Optional[int] = None,
+    ) -> Tuple[Path, List[str], Dict[str, str]]:
         """Download all PDFs from a folder, using cache when available.
 
         Args:
@@ -364,7 +370,10 @@ class GDriveService:
             # Check cache first - use cache if MD5 matches (even with force_refresh)
             # force_refresh only means "re-fetch file list", not "re-download unchanged files"
             if db:
-                cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                cached_query = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id)
+                if user_id is not None:
+                    cached_query = cached_query.filter(PDFCache.user_id == user_id)
+                cached = cached_query.first()
                 if cached:
                     # Use cache if MD5 checksum matches (file unchanged)
                     if md5_checksum and cached.md5_checksum == md5_checksum:
@@ -396,7 +405,10 @@ class GDriveService:
                 # Store in cache
                 if db:
                     from datetime import datetime
-                    existing = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                    existing_query = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id)
+                    if user_id is not None:
+                        existing_query = existing_query.filter(PDFCache.user_id == user_id)
+                    existing = existing_query.first()
                     if existing:
                         existing.content = content
                         existing.filename = file_name
@@ -406,6 +418,7 @@ class GDriveService:
                         existing.last_accessed_at = datetime.utcnow()
                     else:
                         cache_entry = PDFCache(
+                            user_id=user_id,
                             gdrive_file_id=file_id,
                             filename=file_name,
                             content=content,
@@ -592,7 +605,12 @@ class GDriveService:
 
         return True
 
-    def download_files_as_zip(self, file_ids_with_names: List[Tuple[str, str]], db=None) -> bytes:
+    def download_files_as_zip(
+        self,
+        file_ids_with_names: List[Tuple[str, str]],
+        db=None,
+        user_id: Optional[int] = None,
+    ) -> bytes:
         """Download multiple files from Google Drive and return as a zip.
 
         Uses cache when available to speed up downloads.
@@ -628,7 +646,10 @@ class GDriveService:
 
                     # Check cache first
                     if db:
-                        cached = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                        cached_query = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id)
+                        if user_id is not None:
+                            cached_query = cached_query.filter(PDFCache.user_id == user_id)
+                        cached = cached_query.first()
                         if cached:
                             content = cached.content
                             cached.last_accessed_at = datetime.utcnow()
@@ -647,7 +668,10 @@ class GDriveService:
 
                         # Store in cache
                         if db:
-                            existing = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id).first()
+                            existing_query = db.query(PDFCache).filter(PDFCache.gdrive_file_id == file_id)
+                            if user_id is not None:
+                                existing_query = existing_query.filter(PDFCache.user_id == user_id)
+                            existing = existing_query.first()
                             if existing:
                                 existing.content = content
                                 existing.filename = filename
@@ -656,6 +680,7 @@ class GDriveService:
                                 existing.last_accessed_at = datetime.utcnow()
                             else:
                                 cache_entry = PDFCache(
+                                    user_id=user_id,
                                     gdrive_file_id=file_id,
                                     filename=filename,
                                     content=content,

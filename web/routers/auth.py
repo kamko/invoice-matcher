@@ -189,11 +189,15 @@ def auth_callback(request: Request, code: str, state: str, db: Session = Depends
 
     ensure_user_allowed(email)
 
+    normalized_email = email.lower()
     user = db.query(User).filter(User.google_sub == sub).first()
+    if not user:
+        # Support pre-seeded legacy user rows before we know the final Google subject.
+        user = db.query(User).filter(User.email == normalized_email).first()
     if not user:
         user = User(
             google_sub=sub,
-            email=email.lower(),
+            email=normalized_email,
             full_name=verified.get("name"),
             picture_url=verified.get("picture"),
         )
@@ -201,7 +205,8 @@ def auth_callback(request: Request, code: str, state: str, db: Session = Depends
         db.commit()
         db.refresh(user)
     else:
-        user.email = email.lower()
+        user.google_sub = sub
+        user.email = normalized_email
         user.full_name = verified.get("name")
         user.picture_url = verified.get("picture")
         db.commit()
@@ -209,9 +214,10 @@ def auth_callback(request: Request, code: str, state: str, db: Session = Depends
 
     _store_google_drive_connection(db, user, tokens)
 
-    from web.auth import maybe_seed_legacy_settings
+    from web.auth import maybe_claim_legacy_business_data, maybe_seed_legacy_settings
 
     maybe_seed_legacy_settings(db, user)
+    maybe_claim_legacy_business_data(db, user)
     session = create_session(db, user, request)
 
     popup = bool(flow.get("popup", True))

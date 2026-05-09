@@ -37,7 +37,8 @@ def _transaction_to_response(
     rule_reason = None
     if transaction.known_rule_id:
         rule = db.query(KnownTransaction).filter(
-            KnownTransaction.id == transaction.known_rule_id
+            KnownTransaction.id == transaction.known_rule_id,
+            KnownTransaction.user_id == transaction.user_id,
         ).first()
         if rule:
             rule_reason = rule.reason
@@ -67,10 +68,11 @@ def list_transactions(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM)"),
     status: Optional[str] = Query(None, description="Filter by status"),
     type: Optional[str] = Query(None, description="Filter by type (expense/income/fee)"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List transactions with optional filters."""
-    query = db.query(Transaction)
+    query = db.query(Transaction).filter(Transaction.user_id == user.id)
 
     if month:
         # Filter by transaction date month
@@ -108,10 +110,15 @@ def list_transactions(
 
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
-def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
+def get_transaction(
+    transaction_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get a single transaction by ID."""
     transaction = db.query(Transaction).filter(
-        Transaction.id == transaction_id
+        Transaction.id == transaction_id,
+        Transaction.user_id == user.id,
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -122,11 +129,13 @@ def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
 def update_transaction(
     transaction_id: str,
     request: UpdateTransactionRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Update a transaction's editable fields."""
     transaction = db.query(Transaction).filter(
-        Transaction.id == transaction_id
+        Transaction.id == transaction_id,
+        Transaction.user_id == user.id,
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -179,14 +188,15 @@ def fetch_transactions(
     existing_count = 0
     known_matched = 0
 
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
 
     for i, raw in enumerate(raw_transactions):
         send_progress(user.id, "fetch_transactions", i + 1, fetched, f"Processing transaction {i + 1}/{fetched}...")
 
         # Check if transaction already exists
         existing = db.query(Transaction).filter(
-            Transaction.id == raw.id
+            Transaction.id == raw.id,
+            Transaction.user_id == user.id,
         ).first()
 
         if existing:
@@ -212,6 +222,7 @@ def fetch_transactions(
         # Create new transaction
         transaction = Transaction(
             id=raw.id,
+            user_id=user.id,
             date=raw.date,
             amount=raw.amount,
             currency=raw.currency,
@@ -265,10 +276,11 @@ def fetch_transactions(
 def skip_transaction(
     transaction_id: str,
     request: SkipTransactionRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Mark a transaction as skipped."""
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
 
     try:
         transaction = matching.skip_transaction(transaction_id, request.reason)
@@ -278,10 +290,15 @@ def skip_transaction(
 
 
 @router.post("/{transaction_id}/unskip", response_model=TransactionResponse)
-def unskip_transaction(transaction_id: str, db: Session = Depends(get_db)):
+def unskip_transaction(
+    transaction_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Remove skip status from a transaction."""
     transaction = db.query(Transaction).filter(
-        Transaction.id == transaction_id
+        Transaction.id == transaction_id,
+        Transaction.user_id == user.id,
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -300,17 +317,20 @@ def unskip_transaction(transaction_id: str, db: Session = Depends(get_db)):
 def mark_transaction_known(
     transaction_id: str,
     request: MarkKnownRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Create a known transaction rule and apply it."""
     transaction = db.query(Transaction).filter(
-        Transaction.id == transaction_id
+        Transaction.id == transaction_id,
+        Transaction.user_id == user.id,
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     # Create the rule
     rule = KnownTransaction(
+        user_id=user.id,
         rule_type=request.rule_type,
         reason=request.reason,
         vendor_pattern=request.vendor_pattern,
@@ -327,13 +347,14 @@ def mark_transaction_known(
     db.refresh(rule)
 
     # Mark this transaction as known
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
     matching.mark_transaction_known(transaction_id, rule.id)
 
     # Apply rule to other unmatched transactions
     matched_count = 0
     unmatched = db.query(Transaction).filter(
-        Transaction.status == 'unmatched'
+        Transaction.status == 'unmatched',
+        Transaction.user_id == user.id,
     ).all()
 
     for t in unmatched:
@@ -352,15 +373,20 @@ def mark_transaction_known(
 
 
 @router.get("/{transaction_id}/suggestions", response_model=TransactionSuggestionsResponse)
-def get_transaction_suggestions(transaction_id: str, db: Session = Depends(get_db)):
+def get_transaction_suggestions(
+    transaction_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get invoice suggestions for a transaction."""
     transaction = db.query(Transaction).filter(
-        Transaction.id == transaction_id
+        Transaction.id == transaction_id,
+        Transaction.user_id == user.id,
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
     suggestions = matching.suggest_matches_for_transaction(transaction)
 
     return TransactionSuggestionsResponse(
@@ -383,10 +409,11 @@ def get_transaction_suggestions(transaction_id: str, db: Session = Depends(get_d
 def match_transaction_to_invoice(
     transaction_id: str,
     invoice_id: int = Query(..., description="Invoice ID to match"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Match a transaction to an invoice."""
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
 
     try:
         invoice, transaction = matching.match_invoice_to_transaction(

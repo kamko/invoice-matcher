@@ -5,6 +5,7 @@ from pathlib import Path
 from .add_extracted_vendor import migrate as migrate_extracted_vendor
 from .add_invoice_currency import migrate as migrate_invoice_currency
 from .add_invoice_document_type import migrate as migrate_invoice_document_type
+from .add_user_scoping import migrate as migrate_user_scoping
 
 
 def run_all_migrations(db_path: Path) -> list[str]:
@@ -19,5 +20,8 @@ def run_all_migrations(db_path: Path) -> list[str]:
 
     if migrate_invoice_document_type(db_path):
         applied.append("add_invoice_document_type")
+
+    if migrate_user_scoping(db_path):
+        applied.append("add_user_scoping")
 
     return applied

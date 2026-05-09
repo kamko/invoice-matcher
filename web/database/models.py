@@ -110,6 +110,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     gdrive_file_id = Column(String(255), nullable=True, index=True)  # NULL for manual uploads
     receipt_index = Column(Integer, default=0)  # For multi-receipt PDFs
     filename = Column(String(255), nullable=False)
@@ -138,6 +139,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(String(100), primary_key=True)  # Fio transaction ID
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     date = Column(Date, nullable=False, index=True)
     amount = Column(Numeric(12, 2), nullable=False)
     currency = Column(String(3), default='CZK')
@@ -160,6 +162,7 @@ class KnownTransaction(Base):
     __tablename__ = "known_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     rule_type = Column(String(20), nullable=False)  # 'exact', 'pattern', 'vendor', 'note', 'account'
     vendor_pattern = Column(String(255), nullable=True)  # Regex pattern for vendor/counter_name
     note_pattern = Column(String(255), nullable=True)  # Regex pattern for note field
@@ -180,6 +183,7 @@ class VendorAlias(Base):
     __tablename__ = "vendor_aliases"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # Vendor name from transaction (counter_name or extracted from note)
     transaction_vendor = Column(String(255), nullable=False, index=True)
     # Vendor name from invoice (from filename/PDF)
@@ -200,6 +204,7 @@ class PDFCache(Base):
     __tablename__ = "pdf_cache"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     gdrive_file_id = Column(String(255), unique=True, nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     content = Column(LargeBinary, nullable=False)

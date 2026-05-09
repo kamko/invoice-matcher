@@ -13,12 +13,13 @@ from web.schemas.known_transaction import KnownTransactionCreate, KnownTransacti
 class KnownTransactionService:
     """Service for CRUD operations on known transaction rules."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int):
         self.db = db
+        self.user_id = user_id
 
     def get_all(self, active_only: bool = False) -> List[KnownTransaction]:
         """Get all known transaction rules."""
-        query = self.db.query(KnownTransaction)
+        query = self.db.query(KnownTransaction).filter(KnownTransaction.user_id == self.user_id)
         if active_only:
             query = query.filter(KnownTransaction.is_active == True)
         return query.order_by(KnownTransaction.created_at.desc()).all()
@@ -26,12 +27,13 @@ class KnownTransactionService:
     def get_by_id(self, rule_id: int) -> Optional[KnownTransaction]:
         """Get a known transaction rule by ID."""
         return self.db.query(KnownTransaction).filter(
-            KnownTransaction.id == rule_id
+            KnownTransaction.id == rule_id,
+            KnownTransaction.user_id == self.user_id,
         ).first()
 
     def create(self, data: KnownTransactionCreate) -> KnownTransaction:
         """Create a new known transaction rule."""
-        rule = KnownTransaction(**data.model_dump())
+        rule = KnownTransaction(user_id=self.user_id, **data.model_dump())
         self.db.add(rule)
         self.db.commit()
         self.db.refresh(rule)
