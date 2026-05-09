@@ -19,7 +19,7 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: Deploy image tag to Coolify
+      - name: Patch Coolify Docker image tag
         env:
           COOLIFY_API_BASE_URL: ${{ secrets.COOLIFY_API_BASE_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
@@ -27,6 +27,19 @@ jobs:
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
           curl --silent --show-error --fail-with-body \
-            --request POST \
-            --url "${COOLIFY_API_BASE_URL%/}/deploy?uuid=${COOLIFY_APPLICATION_UUID}&docker_tag=${IMAGE_TAG}" \
+            --request PATCH \
+            --url "${COOLIFY_API_BASE_URL%/}/applications/${COOLIFY_APPLICATION_UUID}" \
+            --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "{\"docker_registry_image_tag\":\"${IMAGE_TAG}\"}"
+
+      - name: Deploy Coolify application
+        env:
+          COOLIFY_API_BASE_URL: ${{ secrets.COOLIFY_API_BASE_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_APPLICATION_UUID: ${{ secrets.COOLIFY_APPLICATION_UUID }}
+        run: |
+          curl --silent --show-error --fail-with-body \
+            --request GET \
+            --url "${COOLIFY_API_BASE_URL%/}/deploy?uuid=${COOLIFY_APPLICATION_UUID}" \
             --header "Authorization: Bearer ${COOLIFY_TOKEN}"
