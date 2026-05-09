@@ -74,10 +74,11 @@ def list_invoices(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM)"),
     status: Optional[str] = Query(None, description="Filter by status"),
     document_type: Optional[str] = Query(None, description="Filter by document type"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List invoices with optional filters."""
-    query = db.query(Invoice)
+    query = db.query(Invoice).filter(Invoice.user_id == user.id)
 
     if month:
         # Filter by invoice_date month
@@ -111,9 +112,16 @@ def list_invoices(
 
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
-def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
+def get_invoice(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get a single invoice by ID."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return _invoice_to_response(invoice)
@@ -235,7 +243,8 @@ async def upload_invoice(
 
         # Find next sequence number for this date
         existing_invoices = db.query(Invoice).filter(
-            Invoice.invoice_date == final_date
+            Invoice.invoice_date == final_date,
+            Invoice.user_id == user.id,
         ).all()
         next_seq = len(existing_invoices) + 1
 
@@ -255,6 +264,7 @@ async def upload_invoice(
 
         # Store PDF in cache so it's viewable
         cache_entry = PDFCache(
+            user_id=user.id,
             gdrive_file_id=gdrive_file_id,
             filename=proper_filename,
             content=content,
@@ -266,6 +276,7 @@ async def upload_invoice(
 
         # Create invoice record
         invoice = Invoice(
+            user_id=user.id,
             gdrive_file_id=gdrive_file_id,
             receipt_index=0,
             filename=proper_filename,
@@ -287,7 +298,7 @@ async def upload_invoice(
         db.refresh(invoice)
 
         # Try auto-matching
-        matching = MatchingService(db)
+        matching = MatchingService(db, user.id)
         matching.run_auto_matching()
 
         # Refresh to get updated status
@@ -347,7 +358,8 @@ async def import_gdrive(
         # Check if already exists
         existing = db.query(Invoice).filter(
             Invoice.gdrive_file_id == gdrive_id,
-            Invoice.receipt_index == 0
+            Invoice.receipt_index == 0,
+            Invoice.user_id == user.id,
         ).first()
 
         if existing:
@@ -360,6 +372,7 @@ async def import_gdrive(
 
             # Cache the PDF
             cache_entry = PDFCache(
+                user_id=user.id,
                 gdrive_file_id=gdrive_id,
                 filename=filename,
                 content=content,
@@ -391,6 +404,7 @@ async def import_gdrive(
 
             # Create invoice
             invoice = Invoice(
+                user_id=user.id,
                 gdrive_file_id=gdrive_id,
                 receipt_index=0,
                 filename=filename,
@@ -419,7 +433,7 @@ async def import_gdrive(
 
     # Run auto-matching on new invoices
     send_info(user.id, "Running auto-matching...", "import_gdrive")
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
     match_results = matching.run_auto_matching()
     auto_matched = sum(match_results.values())
 
@@ -438,10 +452,14 @@ async def import_gdrive(
 def update_invoice(
     invoice_id: int,
     update: InvoiceUpdate,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Update invoice metadata."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -463,7 +481,10 @@ def delete_invoice(
     db: Session = Depends(get_db),
 ):
     """Delete an invoice and its PDF from Google Drive."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -481,7 +502,8 @@ def delete_invoice(
     # Delete from PDF cache
     if invoice.gdrive_file_id:
         cache = db.query(PDFCache).filter(
-            PDFCache.gdrive_file_id == invoice.gdrive_file_id
+            PDFCache.gdrive_file_id == invoice.gdrive_file_id,
+            PDFCache.user_id == user.id,
         ).first()
         if cache:
             db.delete(cache)
@@ -489,7 +511,8 @@ def delete_invoice(
     # If matched, unmatch first
     if invoice.transaction_id:
         transaction = db.query(Transaction).filter(
-            Transaction.id == invoice.transaction_id
+            Transaction.id == invoice.transaction_id,
+            Transaction.user_id == user.id,
         ).first()
         if transaction:
             transaction.status = 'unmatched'
@@ -507,10 +530,11 @@ def delete_invoice(
 def match_invoice(
     invoice_id: int,
     request: MatchRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Match an invoice to a transaction."""
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
 
     try:
         invoice, _ = matching.match_invoice_to_transaction(
@@ -523,9 +547,13 @@ def match_invoice(
 
 
 @router.post("/{invoice_id}/unmatch", response_model=InvoiceResponse)
-def unmatch_invoice(invoice_id: int, db: Session = Depends(get_db)):
+def unmatch_invoice(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Remove a match from an invoice."""
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
 
     try:
         invoice = matching.unmatch_invoice(invoice_id)
@@ -535,9 +563,16 @@ def unmatch_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{invoice_id}/reanalyze")
-def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
+def reanalyze_invoice(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Re-parse the PDF and return extracted data (does not update the invoice)."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -546,7 +581,8 @@ def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
     # Get PDF from cache
     cache = db.query(PDFCache).filter(
-        PDFCache.gdrive_file_id == invoice.gdrive_file_id
+        PDFCache.gdrive_file_id == invoice.gdrive_file_id,
+        PDFCache.user_id == user.id,
     ).first()
 
     if not cache:
@@ -581,13 +617,20 @@ def reanalyze_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{invoice_id}/suggestions", response_model=InvoiceSuggestionsResponse)
-def get_invoice_suggestions(invoice_id: int, db: Session = Depends(get_db)):
+def get_invoice_suggestions(
+    invoice_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get match suggestions for an invoice."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    matching = MatchingService(db)
+    matching = MatchingService(db, user.id)
     suggestions = matching.suggest_matches_for_invoice(invoice)
 
     return InvoiceSuggestionsResponse(
@@ -619,7 +662,10 @@ def get_invoice_pdf(
     db: Session = Depends(get_db),
 ):
     """Download the PDF for an invoice."""
-    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -628,7 +674,8 @@ def get_invoice_pdf(
 
     # Check cache first (works for both local uploads and GDrive imports)
     cache = db.query(PDFCache).filter(
-        PDFCache.gdrive_file_id == invoice.gdrive_file_id
+        PDFCache.gdrive_file_id == invoice.gdrive_file_id,
+        PDFCache.user_id == user.id,
     ).first()
 
     if cache:
@@ -648,6 +695,7 @@ def get_invoice_pdf(
 
         # Cache it
         cache_entry = PDFCache(
+            user_id=user.id,
             gdrive_file_id=invoice.gdrive_file_id,
             filename=invoice.filename,
             content=content,

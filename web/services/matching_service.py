@@ -14,8 +14,21 @@ from web.database.models import Invoice, Transaction, VendorAlias, KnownTransact
 class MatchingService:
     """Service for matching invoices to transactions."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: int):
         self.db = db
+        self.user_id = user_id
+
+    def _invoice_query(self):
+        return self.db.query(Invoice).filter(Invoice.user_id == self.user_id)
+
+    def _transaction_query(self):
+        return self.db.query(Transaction).filter(Transaction.user_id == self.user_id)
+
+    def _rule_query(self):
+        return self.db.query(KnownTransaction).filter(KnownTransaction.user_id == self.user_id)
+
+    def _vendor_alias_query(self):
+        return self.db.query(VendorAlias).filter(VendorAlias.user_id == self.user_id)
 
     # =========================================================================
     # Tier 1: Deterministic Auto-Match (100% confidence)
@@ -26,7 +39,7 @@ class MatchingService:
         if not invoice.vs or invoice.payment_type != 'wire':
             return None
 
-        transaction = self.db.query(Transaction).filter(
+        transaction = self._transaction_query().filter(
             Transaction.vs == invoice.vs,
             Transaction.status == 'unmatched',
             Transaction.amount < 0  # Expense
@@ -39,7 +52,7 @@ class MatchingService:
         if not invoice.iban or invoice.payment_type != 'wire':
             return None
 
-        transaction = self.db.query(Transaction).filter(
+        transaction = self._transaction_query().filter(
             Transaction.counter_account == invoice.iban,
             func.abs(Transaction.amount) == invoice.amount,
             Transaction.status == 'unmatched'
@@ -57,7 +70,7 @@ class MatchingService:
             return None
 
         # Get all aliases for this invoice vendor
-        aliases = self.db.query(VendorAlias).filter(
+        aliases = self._vendor_alias_query().filter(
             VendorAlias.invoice_vendor == invoice.vendor.lower()
         ).all()
 
@@ -67,7 +80,7 @@ class MatchingService:
         trans_vendors = [a.transaction_vendor for a in aliases]
 
         # Find unmatched transactions matching any alias
-        for transaction in self.db.query(Transaction).filter(
+        for transaction in self._transaction_query().filter(
             Transaction.status == 'unmatched'
         ).all():
             trans_vendor = self._extract_vendor(transaction)
@@ -103,7 +116,7 @@ class MatchingService:
         """
         candidates = []
 
-        for transaction in self.db.query(Transaction).filter(
+        for transaction in self._transaction_query().filter(
             Transaction.status == 'unmatched'
         ).all():
             # Check type compatibility
@@ -167,7 +180,7 @@ class MatchingService:
         """Return ranked list of potential invoice matches for a transaction."""
         candidates = []
 
-        for invoice in self.db.query(Invoice).filter(
+        for invoice in self._invoice_query().filter(
             Invoice.status == 'unmatched'
         ).all():
             # Check type compatibility
@@ -213,8 +226,8 @@ class MatchingService:
         learn_alias: bool = True
     ) -> Tuple[Invoice, Transaction]:
         """Create a match. Enforces 1:1."""
-        invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
-        transaction = self.db.query(Transaction).filter(Transaction.id == transaction_id).first()
+        invoice = self._invoice_query().filter(Invoice.id == invoice_id).first()
+        transaction = self._transaction_query().filter(Transaction.id == transaction_id).first()
 
         if not invoice:
             raise ValueError(f"Invoice {invoice_id} not found")
@@ -242,7 +255,7 @@ class MatchingService:
 
     def unmatch_invoice(self, invoice_id: int) -> Invoice:
         """Remove a match from an invoice."""
-        invoice = self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+        invoice = self._invoice_query().filter(Invoice.id == invoice_id).first()
         if not invoice:
             raise ValueError(f"Invoice {invoice_id} not found")
 
@@ -250,7 +263,7 @@ class MatchingService:
             raise ValueError("Invoice is not matched")
 
         # Find and update transaction
-        transaction = self.db.query(Transaction).filter(
+        transaction = self._transaction_query().filter(
             Transaction.id == invoice.transaction_id
         ).first()
 
@@ -274,7 +287,7 @@ class MatchingService:
         """
         results = {'tier1_vs': 0, 'tier1_iban': 0, 'tier2_alias': 0, 'cash': 0}
 
-        unmatched_invoices = self.db.query(Invoice).filter(
+        unmatched_invoices = self._invoice_query().filter(
             Invoice.status == 'unmatched'
         ).all()
 
@@ -315,7 +328,7 @@ class MatchingService:
 
     def apply_known_rules(self, transaction: Transaction) -> Optional[KnownTransaction]:
         """Check if transaction matches any known rule."""
-        rules = self.db.query(KnownTransaction).filter(
+        rules = self._rule_query().filter(
             KnownTransaction.is_active == True
         ).all()
 
@@ -368,7 +381,7 @@ class MatchingService:
         rule_id: int
     ) -> Transaction:
         """Mark a transaction as matching a known rule."""
-        transaction = self.db.query(Transaction).filter(
+        transaction = self._transaction_query().filter(
             Transaction.id == transaction_id
         ).first()
         if not transaction:
@@ -385,7 +398,7 @@ class MatchingService:
         reason: str
     ) -> Transaction:
         """Mark a transaction as skipped."""
-        transaction = self.db.query(Transaction).filter(
+        transaction = self._transaction_query().filter(
             Transaction.id == transaction_id
         ).first()
         if not transaction:
@@ -514,7 +527,7 @@ class MatchingService:
         inv_vendor = invoice_vendor.lower().strip()
         trans_vendor = transaction_vendor.lower().strip()
 
-        existing = self.db.query(VendorAlias).filter(
+        existing = self._vendor_alias_query().filter(
             VendorAlias.invoice_vendor == inv_vendor,
             VendorAlias.transaction_vendor == trans_vendor
         ).first()
@@ -524,6 +537,7 @@ class MatchingService:
             existing.last_confirmed_at = datetime.utcnow()
         else:
             alias = VendorAlias(
+                user_id=self.user_id,
                 invoice_vendor=inv_vendor,
                 transaction_vendor=trans_vendor,
                 source='manual_match',

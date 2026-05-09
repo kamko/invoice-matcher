@@ -9,7 +9,16 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
 from web.config import settings
-from web.database.models import AppSettings, User, UserSession
+from web.database.models import (
+    AppSettings,
+    Invoice,
+    KnownTransaction,
+    PDFCache,
+    Transaction,
+    User,
+    UserSession,
+    VendorAlias,
+)
 
 SESSION_COOKIE_SALT = "invoice-matcher-session"
 AUTH_FLOW_COOKIE = "invoice_matcher_auth_flow"
@@ -207,4 +216,24 @@ def maybe_seed_legacy_settings(db: Session, user: User) -> None:
         copied_any = True
 
     if copied_any:
+        db.commit()
+
+
+def maybe_claim_legacy_business_data(db: Session, user: User) -> None:
+    """Attach legacy global data to the first authenticated user.
+
+    This keeps pre-user-scoping deployments usable after rollout without trying to
+    guess ownership in multi-user datasets.
+    """
+    if db.query(User).count() != 1:
+        return
+
+    updated = False
+    for model in (Invoice, Transaction, KnownTransaction, VendorAlias, PDFCache):
+        rows = db.query(model).filter(model.user_id.is_(None)).all()
+        for row in rows:
+            row.user_id = user.id
+            updated = True
+
+    if updated:
         db.commit()

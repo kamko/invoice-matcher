@@ -32,17 +32,22 @@ def _normalize_document_type(value: Optional[str]) -> str:
 
 
 @router.get("/dashboard")
-def get_dashboard(db: Session = Depends(get_db)):
+def get_dashboard(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get dashboard summary statistics."""
     # Unmatched transactions (expenses needing invoices)
     unmatched_transactions = db.query(Transaction).filter(
         Transaction.status == 'unmatched',
-        Transaction.type == 'expense'
+        Transaction.type == 'expense',
+        Transaction.user_id == user.id,
     ).count()
 
     # Unmatched invoices (awaiting payment)
     unmatched_invoices = db.query(Invoice).filter(
-        Invoice.status == 'unmatched'
+        Invoice.status == 'unmatched',
+        Invoice.user_id == user.id,
     ).count()
 
     # Get current month for "this month" stats
@@ -52,33 +57,40 @@ def get_dashboard(db: Session = Depends(get_db)):
     # Matched this month
     matched_this_month = db.query(Invoice).filter(
         Invoice.status == 'matched',
-        Invoice.invoice_date >= current_month_start
+        Invoice.invoice_date >= current_month_start,
+        Invoice.user_id == user.id,
     ).count()
 
     # Ready to export (matched but not exported)
     ready_to_export = db.query(Invoice).filter(
-        Invoice.status == 'matched'
+        Invoice.status == 'matched',
+        Invoice.user_id == user.id,
     ).count()
 
     # Known transactions
     known_transactions = db.query(Transaction).filter(
-        Transaction.status == 'known'
+        Transaction.status == 'known',
+        Transaction.user_id == user.id,
     ).count()
 
     # Skipped transactions
     skipped_transactions = db.query(Transaction).filter(
-        Transaction.status == 'skipped'
+        Transaction.status == 'skipped',
+        Transaction.user_id == user.id,
     ).count()
 
     # Get available months for filters
     invoice_months = db.query(
         func.strftime('%Y-%m', Invoice.invoice_date)
     ).filter(
-        Invoice.invoice_date.isnot(None)
+        Invoice.invoice_date.isnot(None),
+        Invoice.user_id == user.id,
     ).distinct().all()
 
     transaction_months = db.query(
         func.strftime('%Y-%m', Transaction.date)
+    ).filter(
+        Transaction.user_id == user.id,
     ).distinct().all()
 
     all_months = sorted(set(
@@ -120,7 +132,8 @@ def export_month(
     invoices = db.query(Invoice).filter(
         Invoice.status.in_(['matched', 'exported', 'cash']),
         Invoice.invoice_date >= start_date,
-        Invoice.invoice_date <= end_date
+        Invoice.invoice_date <= end_date,
+        Invoice.user_id == user.id,
     ).all()
 
     if not invoices:
@@ -141,7 +154,8 @@ def export_month(
 
             # Get PDF from cache
             cache = db.query(PDFCache).filter(
-                PDFCache.gdrive_file_id == invoice.gdrive_file_id
+                PDFCache.gdrive_file_id == invoice.gdrive_file_id,
+                PDFCache.user_id == user.id,
             ).first()
 
             if cache:
@@ -156,6 +170,7 @@ def export_month(
 
                         # Cache it
                         cache_entry = PDFCache(
+                            user_id=user.id,
                             gdrive_file_id=invoice.gdrive_file_id,
                             filename=invoice.filename,
                             content=content,
@@ -187,7 +202,11 @@ def export_month(
 
 
 @router.get("/stats/{year_month}")
-def get_month_stats(year_month: str, db: Session = Depends(get_db)):
+def get_month_stats(
+    year_month: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get statistics for a specific month."""
     try:
         year, mon = map(int, year_month.split('-'))
@@ -202,7 +221,8 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
     # Invoice stats for this month (by invoice_date)
     invoices = db.query(Invoice).filter(
         Invoice.invoice_date >= start_date,
-        Invoice.invoice_date <= end_date
+        Invoice.invoice_date <= end_date,
+        Invoice.user_id == user.id,
     ).all()
 
     invoice_stats = {
@@ -216,7 +236,8 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
     # Transaction stats for this month (by transaction date)
     transactions = db.query(Transaction).filter(
         Transaction.date >= start_date,
-        Transaction.date <= end_date
+        Transaction.date <= end_date,
+        Transaction.user_id == user.id,
     ).all()
 
     # Calculate amounts
@@ -252,10 +273,13 @@ def get_month_stats(year_month: str, db: Session = Depends(get_db)):
 
 
 @router.get("/monthly-summary")
-def get_monthly_summary(db: Session = Depends(get_db)):
+def get_monthly_summary(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Get income/expense summary for all months."""
     # Get all transactions grouped by month
-    transactions = db.query(Transaction).all()
+    transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
 
     # Group by month
     monthly_data = {}
@@ -273,7 +297,10 @@ def get_monthly_summary(db: Session = Depends(get_db)):
             monthly_data[month_key]["fees"] += amount
 
     # Add cash invoices (no bank transaction)
-    cash_invoices = db.query(Invoice).filter(Invoice.status == 'cash').all()
+    cash_invoices = db.query(Invoice).filter(
+        Invoice.status == 'cash',
+        Invoice.user_id == user.id,
+    ).all()
     for inv in cash_invoices:
         if inv.invoice_date and inv.amount:
             month_key = inv.invoice_date.strftime('%Y-%m')
@@ -324,7 +351,8 @@ def copy_to_accountant_folder(
         Invoice.status.in_(['matched', 'cash']),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
-        Invoice.gdrive_file_id.isnot(None)
+        Invoice.gdrive_file_id.isnot(None),
+        Invoice.user_id == user.id,
     ).all()
 
     if not invoices:
