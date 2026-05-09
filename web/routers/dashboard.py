@@ -14,6 +14,19 @@ from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
+ACCOUNTANT_FOLDER_NAMES = {
+    "receipt": "POKLADNICNE_DOKLADY",
+    "invoice": "DOSLE_FAKTURY",
+    "other": "OSTATNE",
+}
+
+
+def _normalize_document_type(value: Optional[str]) -> str:
+    """Normalize document type to a supported export bucket."""
+    normalized = (value or "invoice").strip().lower()
+    if normalized in ACCOUNTANT_FOLDER_NAMES:
+        return normalized
+    return "other"
 
 
 @router.get("/dashboard")
@@ -312,27 +325,38 @@ def copy_to_accountant_folder(
     if not invoices:
         raise HTTPException(status_code=404, detail="No matched/cash invoices to export for this month")
 
-    # Find or create month subfolder in target folder (YYYYMM format)
-    month_folder_name = f"{year}{mon:02d}"
-    try:
-        target_subfolder_id = _gdrive_service.find_or_create_subfolder(folder_id, month_folder_name)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create month folder: {e}")
-
-    # Get existing files in target folder to avoid duplicates
-    try:
-        existing_files = set(_gdrive_service.list_files_in_folder(target_subfolder_id))
-    except Exception:
-        existing_files = set()
-
     copied = 0
     skipped = 0
     errors = []
+    successful_exports = []
+    target_folder_ids: dict[str, str] = {}
+    existing_files_by_folder: dict[str, set[str]] = {}
 
     for invoice in invoices:
-        # Skip if file already exists
+        document_type = _normalize_document_type(invoice.document_type)
+        target_folder_name = ACCOUNTANT_FOLDER_NAMES[document_type]
+
+        target_subfolder_id = target_folder_ids.get(target_folder_name)
+        if target_subfolder_id is None:
+            try:
+                target_subfolder_id = _gdrive_service.find_or_create_subfolder(folder_id, target_folder_name)
+            except Exception as e:
+                errors.append(f"{invoice.filename}: failed to resolve {target_folder_name} ({e})")
+                continue
+
+            target_folder_ids[target_folder_name] = target_subfolder_id
+            try:
+                existing_files_by_folder[target_folder_name] = set(
+                    _gdrive_service.list_files_in_folder(target_subfolder_id)
+                )
+            except Exception:
+                existing_files_by_folder[target_folder_name] = set()
+
+        existing_files = existing_files_by_folder[target_folder_name]
+
         if invoice.filename in existing_files:
             skipped += 1
+            successful_exports.append(invoice)
             continue
 
         try:
@@ -342,11 +366,13 @@ def copy_to_accountant_folder(
                 invoice.filename  # Keep same filename
             )
             copied += 1
+            existing_files.add(invoice.filename)
+            successful_exports.append(invoice)
         except Exception as e:
             errors.append(f"{invoice.filename}: {str(e)}")
 
     if mark_exported:
-        for invoice in invoices:
+        for invoice in successful_exports:
             invoice.status = 'exported'
         db.commit()
 
@@ -356,5 +382,5 @@ def copy_to_accountant_folder(
         "skipped": skipped,
         "total": len(invoices),
         "errors": errors,
-        "target_folder": month_folder_name,
+        "target_folders": sorted(target_folder_ids.keys()),
     }

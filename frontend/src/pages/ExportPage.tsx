@@ -43,7 +43,7 @@ export function ExportPage() {
       } else if (result.skipped > 0) {
         showSuccess(`Copied ${result.copied} invoices, ${result.skipped} already existed`)
       } else {
-        showSuccess(`Copied ${result.copied} invoices to accountant folder`)
+        showSuccess(`Copied ${result.copied} invoices to accountant folders`)
       }
     } catch (error) {
       showApiError(error, 'Copy to GDrive')
@@ -202,8 +202,8 @@ export function ExportPage() {
           {accountantFolderId && (
             <p>
               <strong>Copy to Accountant</strong>: Copies invoices to your configured shared folder
-              ({accountantFolderName || accountantFolderId}), creating a YYYYMM subfolder automatically.
-              Configure this in Settings.
+              ({accountantFolderName || accountantFolderId}) and routes them by document type into
+              `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`.
             </p>
           )}
         </CardContent>

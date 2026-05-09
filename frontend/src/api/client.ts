@@ -46,6 +46,7 @@ export interface Invoice {
   receipt_index: number
   filename: string
   vendor?: string
+  document_type: 'invoice' | 'receipt' | 'other'
   amount?: string
   currency: string  // EUR, USD, CZK, etc.
   invoice_date?: string
@@ -208,14 +209,15 @@ export function useCopyToGDrive() {
 // Invoice Hooks
 // ============================================================================
 
-export function useInvoices(month?: string, status?: string) {
+export function useInvoices(month?: string, status?: string, documentType?: string) {
   const params = new URLSearchParams()
   if (month) params.set('month', month)
   if (status) params.set('status', status)
+  if (documentType) params.set('document_type', documentType)
   const queryString = params.toString()
 
   return useQuery({
-    queryKey: ['invoices', month, status],
+    queryKey: ['invoices', month, status, documentType],
     queryFn: () => fetchJson<InvoiceListResponse>(`/invoices${queryString ? `?${queryString}` : ''}`),
   })
 }
@@ -231,9 +233,10 @@ export function useInvoice(invoiceId: number | null) {
 export function useUploadInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ file, vendor, invoiceDate, paymentType, amount, gdriveFolderId, skipAnalyze }: {
+    mutationFn: async ({ file, vendor, documentType, invoiceDate, paymentType, amount, gdriveFolderId, skipAnalyze }: {
       file: File
       vendor?: string
+      documentType?: string
       invoiceDate?: string
       paymentType?: string
       amount?: string
@@ -244,6 +247,7 @@ export function useUploadInvoice() {
       formData.append('file', file)
       formData.append('gdrive_folder_id', gdriveFolderId)
       if (vendor) formData.append('vendor', vendor)
+      if (documentType) formData.append('document_type', documentType)
       if (invoiceDate) formData.append('invoice_date', invoiceDate)
       if (paymentType) formData.append('payment_type', paymentType)
       if (amount) formData.append('amount', amount)
@@ -301,6 +305,7 @@ export function useUpdateInvoice() {
       invoiceId: number
       filename?: string
       vendor?: string
+      document_type?: string
       amount?: string
       currency?: string
       invoice_date?: string
@@ -373,6 +378,7 @@ export interface ReanalyzeResult {
   success: boolean
   extracted: {
     vendor?: string
+    document_type?: string
     amount?: string
     currency?: string
     invoice_date?: string

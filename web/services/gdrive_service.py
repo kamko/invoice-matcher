@@ -521,9 +521,30 @@ class GDriveService:
             q=query,
             pageSize=500,
             fields="files(name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
 
         return [item["name"] for item in results.get("files", [])]
+
+    def download_file(self, file_id: str) -> bytes:
+        """Download a single file from Google Drive."""
+        if not GDRIVE_AVAILABLE:
+            raise RuntimeError("Google Drive libraries not installed")
+
+        if not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+
+        service = build("drive", "v3", credentials=self._credentials)
+        request = service.files().get_media(fileId=file_id)
+        file_buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(file_buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        file_buffer.seek(0)
+        return file_buffer.read()
 
     def copy_file(self, file_id: str, target_folder_id: str, new_name: Optional[str] = None) -> str:
         """Copy a file to another folder in Google Drive.

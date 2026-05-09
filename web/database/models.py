@@ -31,6 +31,7 @@ class Invoice(Base):
     receipt_index = Column(Integer, default=0)  # For multi-receipt PDFs
     filename = Column(String(255), nullable=False)
     vendor = Column(String(255), nullable=True)
+    document_type = Column(String(20), default='invoice', nullable=False)  # invoice/receipt/other
     amount = Column(Numeric(12, 2), nullable=True)
     currency = Column(String(3), default='EUR')  # EUR, USD, CZK, etc.
     invoice_date = Column(Date, nullable=True)  # Determines "invoice month" for VAT
