@@ -39,6 +39,13 @@ import { Checkbox } from '../components/ui/checkbox'
 import { Check, FileText, Ban, RefreshCw } from 'lucide-react'
 import { unlockStoredSecret } from '../lib/crypto'
 
+function formatDateForApi(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function TransactionsPage() {
   const search = useSearch()
   const params = new URLSearchParams(search)
@@ -88,8 +95,8 @@ export function TransactionsPage() {
       const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       const result = await fetchTransactions.mutateAsync({
         fio_token: fioToken,
-        from_date: oneMonthAgo.toISOString().split('T')[0],
-        to_date: today.toISOString().split('T')[0],
+        from_date: formatDateForApi(oneMonthAgo),
+        to_date: formatDateForApi(today),
       })
       showSuccess(`Fetched ${result.new} new transactions`)
       refetch()

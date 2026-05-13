@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
+import requests
 from fiobank import FioBank, ThrottlingError
 
 
@@ -50,6 +51,10 @@ def fetch_transactions_from_api(
             "Fio API rate limit: token can only be used once per 30 seconds. "
             "Please wait and try again."
         )
+    except requests.HTTPError as exc:
+        raise RuntimeError(_map_fio_http_error(exc)) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError("Failed to contact Fio API") from exc
 
     transactions = []
 
@@ -59,6 +64,66 @@ def fetch_transactions_from_api(
             transactions.append(transaction)
 
     return transactions
+
+
+def _map_fio_http_error(exc: requests.HTTPError) -> str:
+    """Translate Fio HTTP responses into actionable messages."""
+    status_code = exc.response.status_code if exc.response is not None else None
+
+    if status_code == 404:
+        return (
+            "Fio API returned 404. Fio's API docs say this usually means the token "
+            "is inactive/expired or the request URL parameters are invalid."
+        )
+
+    if status_code == 409:
+        return (
+            "Fio API rate limit: token can only be used once per 30 seconds. "
+            "Please wait and try again."
+        )
+
+    if status_code == 413:
+        return (
+            "Fio API rejected the request because the result set is too large. "
+            "Try fetching a shorter date range."
+        )
+
+    if status_code == 422:
+        return (
+            "Fio API blocked access to older history. Requests older than 90 days "
+            "need temporary history unlock in Fio Internetbanking > Settings > API."
+        )
+
+    if status_code == 500:
+        return (
+            "Fio API returned 500. Fio's docs say this can indicate a non-existent "
+            "or inactive token."
+        )
+
+    return f"Fio API request failed with HTTP {status_code or 'unknown'}"
+
+
+def fetch_monthly_statement_pdf(token: str, year: int, month: int) -> bytes:
+    """Fetch a monthly transaction statement PDF from the Fio REST API."""
+    url = f"https://fioapi.fio.cz/v1/rest/by-id/{token}/{year}/{month}/transactions.pdf"
+
+    try:
+        response = requests.get(url, timeout=60)
+    except requests.RequestException as exc:
+        raise RuntimeError("Failed to download monthly statement from Fio API") from exc
+
+    if response.status_code != 200:
+        detail = response.text.strip()
+        if detail:
+            detail = detail.replace(token, "***TOKEN***")
+            raise RuntimeError(f"Fio API returned {response.status_code} while downloading statement: {detail[:200]}")
+        raise RuntimeError(f"Fio API returned {response.status_code} while downloading statement")
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "pdf" not in content_type and not response.content.startswith(b"%PDF"):
+        raise RuntimeError("Fio API did not return a PDF statement")
+
+    return response.content
 
 
 def _convert_api_transaction(trans: dict) -> Optional[RawTransaction]:
