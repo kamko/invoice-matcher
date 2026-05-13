@@ -290,14 +290,29 @@ export function useMonthlySummary() {
 export function useCopyToGDrive() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ yearMonth, folderId, markExported }: {
+    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement }: {
       yearMonth: string
       folderId: string
       markExported: boolean
+      fioToken?: string
+      includeMonthlyStatement: boolean
     }) =>
-      fetchJson<{ success: boolean; copied: number; skipped: number; total: number; errors: string[] }>(
+      fetchJson<{
+        success: boolean
+        copied: number
+        skipped: number
+        total: number
+        errors: string[]
+        statement: { filename: string; status: 'uploaded' | 'skipped' | 'failed' | 'missing_token' | 'not_requested' }
+      }>(
         `/export/${yearMonth}/copy-to-gdrive?folder_id=${encodeURIComponent(folderId)}&mark_exported=${markExported}`,
-        { method: 'POST' }
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            fio_token: fioToken || '',
+            include_monthly_statement: includeMonthlyStatement,
+          }),
+        }
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] })

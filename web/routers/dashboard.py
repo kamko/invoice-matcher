@@ -7,9 +7,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from parsers.fio_api import fetch_monthly_statement_pdf
 from web.auth import get_current_user
 from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache, User
@@ -23,12 +25,41 @@ ACCOUNTANT_FOLDER_NAMES = {
 }
 
 
+class CopyToAccountantRequest(BaseModel):
+    """Optional secrets required for accountant export."""
+
+    fio_token: Optional[str] = None
+    include_monthly_statement: bool = False
+
+
 def _normalize_document_type(value: Optional[str]) -> str:
     """Normalize document type to a supported export bucket."""
     normalized = (value or "invoice").strip().lower()
     if normalized in ACCOUNTANT_FOLDER_NAMES:
         return normalized
     return "other"
+
+
+def _get_or_create_accountant_subfolder(
+    gdrive_service,
+    root_folder_id: str,
+    folder_name: str,
+    target_folder_ids: dict[str, str],
+    existing_files_by_folder: dict[str, set[str]],
+) -> tuple[str, set[str]]:
+    """Resolve an accountant subfolder and cache its existing filenames."""
+    target_subfolder_id = target_folder_ids.get(folder_name)
+    if target_subfolder_id is None:
+        target_subfolder_id = gdrive_service.find_or_create_subfolder(root_folder_id, folder_name)
+        target_folder_ids[folder_name] = target_subfolder_id
+        try:
+            existing_files_by_folder[folder_name] = set(
+                gdrive_service.list_files_in_folder(target_subfolder_id)
+            )
+        except Exception:
+            existing_files_by_folder[folder_name] = set()
+
+    return target_subfolder_id, existing_files_by_folder[folder_name]
 
 
 @router.get("/dashboard")
@@ -329,11 +360,14 @@ def copy_to_accountant_folder(
     year_month: str,
     folder_id: str = Query(..., description="Target GDrive folder ID"),
     mark_exported: bool = Query(False, description="Mark invoices as exported"),
+    payload: Optional[CopyToAccountantRequest] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Copy matched invoices to a shared GDrive folder (e.g., accountant folder)."""
     gdrive_service = get_gdrive_service_for_user(db, user)
+    fio_token = (payload.fio_token or "").strip() if payload else ""
+    include_monthly_statement = payload.include_monthly_statement if payload else False
 
     # Parse month
     try:
@@ -364,28 +398,24 @@ def copy_to_accountant_folder(
     successful_exports = []
     target_folder_ids: dict[str, str] = {}
     existing_files_by_folder: dict[str, set[str]] = {}
+    statement_status = "not_requested"
+    statement_filename = f"fio_statement_{year}-{mon:02d}.pdf"
 
     for invoice in invoices:
         document_type = _normalize_document_type(invoice.document_type)
         target_folder_name = ACCOUNTANT_FOLDER_NAMES[document_type]
 
-        target_subfolder_id = target_folder_ids.get(target_folder_name)
-        if target_subfolder_id is None:
-            try:
-                target_subfolder_id = gdrive_service.find_or_create_subfolder(folder_id, target_folder_name)
-            except Exception as e:
-                errors.append(f"{invoice.filename}: failed to resolve {target_folder_name} ({e})")
-                continue
-
-            target_folder_ids[target_folder_name] = target_subfolder_id
-            try:
-                existing_files_by_folder[target_folder_name] = set(
-                    gdrive_service.list_files_in_folder(target_subfolder_id)
-                )
-            except Exception:
-                existing_files_by_folder[target_folder_name] = set()
-
-        existing_files = existing_files_by_folder[target_folder_name]
+        try:
+            target_subfolder_id, existing_files = _get_or_create_accountant_subfolder(
+                gdrive_service,
+                folder_id,
+                target_folder_name,
+                target_folder_ids,
+                existing_files_by_folder,
+            )
+        except Exception as e:
+            errors.append(f"{invoice.filename}: failed to resolve {target_folder_name} ({e})")
+            continue
 
         if invoice.filename in existing_files:
             skipped += 1
@@ -404,6 +434,31 @@ def copy_to_accountant_folder(
         except Exception as e:
             errors.append(f"{invoice.filename}: {str(e)}")
 
+    if include_monthly_statement:
+        other_folder_name = ACCOUNTANT_FOLDER_NAMES["other"]
+        try:
+            if not fio_token:
+                raise RuntimeError("Fio token is required to download the monthly statement")
+
+            target_subfolder_id, existing_files = _get_or_create_accountant_subfolder(
+                gdrive_service,
+                folder_id,
+                other_folder_name,
+                target_folder_ids,
+                existing_files_by_folder,
+            )
+
+            if statement_filename in existing_files:
+                statement_status = "skipped"
+            else:
+                statement_content = fetch_monthly_statement_pdf(fio_token, year, mon)
+                gdrive_service.upload_pdf(target_subfolder_id, statement_filename, statement_content)
+                existing_files.add(statement_filename)
+                statement_status = "uploaded"
+        except Exception as e:
+            statement_status = "failed"
+            errors.append(f"{statement_filename}: {str(e)}")
+
     if mark_exported:
         for invoice in successful_exports:
             invoice.status = 'exported'
@@ -416,4 +471,8 @@ def copy_to_accountant_folder(
         "total": len(invoices),
         "errors": errors,
         "target_folders": sorted(target_folder_ids.keys()),
+        "statement": {
+            "filename": statement_filename,
+            "status": statement_status,
+        },
     }

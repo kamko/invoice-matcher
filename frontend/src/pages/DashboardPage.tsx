@@ -21,6 +21,13 @@ function formatCurrency(amount: number) {
   }).format(amount)
 }
 
+function formatDateForApi(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function DashboardPage() {
   const { data: dashboard, isLoading, refetch } = useDashboard()
   const { data: monthlySummary } = useMonthlySummary()
@@ -48,8 +55,8 @@ export function DashboardPage() {
       const fromDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       const result = await fetchTransactions.mutateAsync({
         fio_token: fioToken,
-        from_date: fromDate.toISOString().split('T')[0],
-        to_date: today.toISOString().split('T')[0],
+        from_date: formatDateForApi(fromDate),
+        to_date: formatDateForApi(today),
       })
       showSuccess(`Fetched ${result.new} new transactions`)
       refetch()

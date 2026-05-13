@@ -1,25 +1,47 @@
 import { useState } from 'react'
-import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Label } from '../components/ui/label'
 import { Select } from '../components/ui/select'
 import { Checkbox } from '../components/ui/checkbox'
 import { Download, FileText, CheckCircle, Cloud, Loader2 } from 'lucide-react'
+import { getLegacyFioToken, unlockStoredSecret } from '../lib/crypto'
 
 export function ExportPage() {
   const { data: dashboard } = useDashboard()
   const { data: settings } = useSettings()
   const { data: gdriveStatus } = useGDriveStatus()
+  const { data: fioVault } = useFioVault()
   const copyToGDrive = useCopyToGDrive()
   const [selectedMonth, setSelectedMonth] = useState('')
   const [markExported, setMarkExported] = useState(false)
+  const [includeMonthlyStatement, setIncludeMonthlyStatement] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
 
   const { data: stats, isLoading: statsLoading } = useMonthStats(selectedMonth || null)
 
   const accountantFolderId = settings?.accountant_folder_id
   const accountantFolderName = settings?.accountant_folder_name
+
+  const resolveFioToken = async () => {
+    if (fioVault?.configured && fioVault.ciphertext && fioVault.nonce && fioVault.salt && fioVault.kdf && fioVault.kdf_params) {
+      return unlockStoredSecret({
+        ciphertext: fioVault.ciphertext,
+        nonce: fioVault.nonce,
+        salt: fioVault.salt,
+        kdf: fioVault.kdf,
+        kdf_params: fioVault.kdf_params,
+      })
+    }
+
+    const legacyToken = getLegacyFioToken()?.trim()
+    if (legacyToken) {
+      return legacyToken
+    }
+
+    throw new Error('Configure your Fio token in Settings before copying to Accountant')
+  }
 
   const handleExport = () => {
     if (!selectedMonth) return
@@ -33,18 +55,27 @@ export function ExportPage() {
 
     setIsCopying(true)
     try {
+      const fioToken = includeMonthlyStatement ? await resolveFioToken() : undefined
       const result = await copyToGDrive.mutateAsync({
         yearMonth: selectedMonth,
         folderId: accountantFolderId,
         markExported,
+        includeMonthlyStatement,
+        fioToken,
       })
-      if (result.errors?.length > 0) {
-        showSuccess(`Copied ${result.copied}/${result.total} invoices (${result.errors.length} errors)`)
-      } else if (result.skipped > 0) {
-        showSuccess(`Copied ${result.copied} invoices, ${result.skipped} already existed`)
-      } else {
-        showSuccess(`Copied ${result.copied} invoices to accountant folders`)
+      let message = `Copied ${result.copied} invoices`
+      if (result.skipped > 0) {
+        message += `, ${result.skipped} already existed`
       }
+      if (includeMonthlyStatement && result.statement.status === 'uploaded') {
+        message += ', uploaded monthly statement'
+      } else if (includeMonthlyStatement && result.statement.status === 'skipped') {
+        message += ', monthly statement already existed'
+      }
+      if (result.errors?.length > 0) {
+        message += ` (${result.errors.length} errors)`
+      }
+      showSuccess(message)
     } catch (error) {
       showApiError(error, 'Copy to GDrive')
     } finally {
@@ -88,6 +119,17 @@ export function ExportPage() {
                 />
                 <Label htmlFor="mark-exported" className="text-sm font-normal">
                   Mark invoices as exported after download
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="include-monthly-statement"
+                  checked={includeMonthlyStatement}
+                  onCheckedChange={(checked) => setIncludeMonthlyStatement(checked === true)}
+                />
+                <Label htmlFor="include-monthly-statement" className="text-sm font-normal">
+                  Include monthly PDF statement
                 </Label>
               </div>
 
@@ -203,7 +245,8 @@ export function ExportPage() {
             <p>
               <strong>Copy to Accountant</strong>: Copies invoices to your configured shared folder
               ({accountantFolderName || accountantFolderId}) and routes them by document type into
-              `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`.
+              `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`. If you enable
+              "Include monthly PDF statement", the app also uploads the monthly Fio statement PDF to `OSTATNE`.
             </p>
           )}
         </CardContent>
