@@ -17,6 +17,11 @@ export interface EncryptedSecretPayload {
   }
 }
 
+interface RememberedVaultPasswordRecord {
+  password: string
+  fingerprint: string
+}
+
 const DEFAULT_KDF_PARAMS = {
   iterations: 3,
   memorySize: 65536,
@@ -26,6 +31,10 @@ const DEFAULT_KDF_PARAMS = {
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
+
+function buildVaultFingerprint(payload: EncryptedSecretPayload): string {
+  return `${payload.salt}:${payload.nonce}:${payload.ciphertext.slice(0, 32)}`
+}
 
 function toBase64(bytes: Uint8Array): string {
   let binary = ''
@@ -103,17 +112,58 @@ export async function decryptSecret(payload: EncryptedSecretPayload, password: s
 }
 
 export function getRememberedVaultPassword(): string | null {
-  return localStorage.getItem(LOCAL_VAULT_PASSWORD_KEY) || sessionStorage.getItem(SESSION_VAULT_PASSWORD_KEY)
+  const localValue = localStorage.getItem(LOCAL_VAULT_PASSWORD_KEY)
+  const sessionValue = sessionStorage.getItem(SESSION_VAULT_PASSWORD_KEY)
+  return localValue || sessionValue
 }
 
 export function hasPersistentVaultPassword(): boolean {
   return !!localStorage.getItem(LOCAL_VAULT_PASSWORD_KEY)
 }
 
-export function rememberVaultPassword(password: string, persistOnDevice: boolean) {
-  sessionStorage.setItem(SESSION_VAULT_PASSWORD_KEY, password)
+function getRememberedVaultPasswordForPayload(payload: EncryptedSecretPayload): string | null {
+  const expectedFingerprint = buildVaultFingerprint(payload)
+
+  for (const [storage, key] of [
+    [localStorage, LOCAL_VAULT_PASSWORD_KEY],
+    [sessionStorage, SESSION_VAULT_PASSWORD_KEY],
+  ] as const) {
+    const raw = storage.getItem(key)
+    if (!raw) {
+      continue
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<RememberedVaultPasswordRecord>
+      if (parsed.password && parsed.fingerprint === expectedFingerprint) {
+        return parsed.password
+      }
+    } catch {
+      // Ignore legacy plain-string values below.
+    }
+
+    // Clear stale or legacy values so they do not get silently reused.
+    storage.removeItem(key)
+  }
+
+  return null
+}
+
+export function rememberVaultPassword(
+  password: string,
+  persistOnDevice: boolean,
+  payload?: EncryptedSecretPayload
+) {
+  const serialized = payload
+    ? JSON.stringify({
+        password,
+        fingerprint: buildVaultFingerprint(payload),
+      } satisfies RememberedVaultPasswordRecord)
+    : password
+
+  sessionStorage.setItem(SESSION_VAULT_PASSWORD_KEY, serialized)
   if (persistOnDevice) {
-    localStorage.setItem(LOCAL_VAULT_PASSWORD_KEY, password)
+    localStorage.setItem(LOCAL_VAULT_PASSWORD_KEY, serialized)
   } else {
     localStorage.removeItem(LOCAL_VAULT_PASSWORD_KEY)
   }
@@ -133,11 +183,11 @@ export function clearLegacyFioToken() {
 }
 
 export async function unlockStoredSecret(payload: EncryptedSecretPayload): Promise<string> {
-  const remembered = getRememberedVaultPassword()
+  const remembered = getRememberedVaultPasswordForPayload(payload)
   if (remembered) {
     try {
       const secret = await decryptSecret(payload, remembered)
-      rememberVaultPassword(remembered, hasPersistentVaultPassword())
+      rememberVaultPassword(remembered, hasPersistentVaultPassword(), payload)
       return secret
     } catch {
       clearRememberedVaultPassword()
@@ -150,6 +200,6 @@ export async function unlockStoredSecret(payload: EncryptedSecretPayload): Promi
   }
 
   const secret = await decryptSecret(payload, prompted)
-  rememberVaultPassword(prompted, false)
+  rememberVaultPassword(prompted, false, payload)
   return secret
 }

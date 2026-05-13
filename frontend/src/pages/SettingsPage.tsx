@@ -122,7 +122,7 @@ export function SettingsPage() {
     try {
       const payload = await encryptSecret(fioToken.trim(), vaultPassword)
       await saveFioVault.mutateAsync(payload)
-      rememberVaultPassword(vaultPassword, persistVaultPassword)
+      rememberVaultPassword(vaultPassword, persistVaultPassword, payload)
       clearLegacyFioToken()
       setHasLegacyToken(false)
       setFioToken('')
