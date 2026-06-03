@@ -88,7 +88,6 @@ def _build_google_auth_url(state: str, nonce: str, code_challenge: str) -> str:
         "nonce": nonce,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
-        "prompt": "consent select_account",
     }
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
