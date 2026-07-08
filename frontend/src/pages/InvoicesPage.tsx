@@ -714,10 +714,10 @@ export function InvoicesPage() {
           <DialogHeader>
             <DialogTitle>Upload Invoice</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {/* Drag & Drop Zone */}
             <div
-              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              className={`min-w-0 overflow-hidden border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                 isDragging
                   ? 'border-blue-500 bg-blue-50'
                   : uploadFile
@@ -742,9 +742,9 @@ export function InvoicesPage() {
                   <span className="text-sm text-muted-foreground">Analyzing PDF...</span>
                 </div>
               ) : uploadFile ? (
-                <div className="flex flex-col items-center gap-2">
-                  <Check className="h-8 w-8 text-green-600" />
-                  <span className="font-medium">{uploadFile.name}</span>
+                <div className="flex min-w-0 flex-col items-center gap-2">
+                  <Check className="h-8 w-8 shrink-0 text-green-600" />
+                  <span className="max-w-full break-words font-medium leading-tight">{uploadFile.name}</span>
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
@@ -765,7 +765,7 @@ export function InvoicesPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex min-w-0 flex-col items-center gap-2">
                   <Upload className="h-8 w-8 text-gray-400" />
                   <span className="text-sm text-muted-foreground">
                     Drag & drop PDF here, or
@@ -786,8 +786,8 @@ export function InvoicesPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="min-w-0">
                 <Label>Vendor</Label>
                 <Input
                   value={uploadVendor}
@@ -795,7 +795,7 @@ export function InvoicesPage() {
                   placeholder="e.g., Alza, Hetzner"
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label>Amount</Label>
                 <Input
                   value={uploadAmount}
@@ -805,8 +805,8 @@ export function InvoicesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="min-w-0">
                 <Label>Invoice Date</Label>
                 <Input
                   type="date"
@@ -814,7 +814,7 @@ export function InvoicesPage() {
                   onChange={(e) => setUploadDate(e.target.value)}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label>Document Type</Label>
                 <Select
                   value={uploadDocumentType}
@@ -824,8 +824,8 @@ export function InvoicesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="min-w-0">
                 <Label>Payment Type</Label>
                 <Select
                   value={uploadPaymentType}
@@ -843,22 +843,22 @@ export function InvoicesPage() {
 
             {/* Filename Preview */}
             {getPreviewFilename() && (
-              <div className="p-3 bg-muted rounded-lg">
+              <div className="min-w-0 rounded-lg bg-muted p-3">
                 <Label className="text-xs text-muted-foreground">Will be saved as:</Label>
-                <div className="font-mono text-sm mt-1">{getPreviewFilename()}</div>
+                <div className="mt-1 break-all font-mono text-sm">{getPreviewFilename()}</div>
               </div>
             )}
 
             {/* Skip analyze checkbox */}
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2">
               <input
                 type="checkbox"
                 id="skipAnalyze"
                 checked={uploadSkipAnalyze}
                 onChange={(e) => setUploadSkipAnalyze(e.target.checked)}
-                className="h-4 w-4"
+                className="mt-0.5 h-4 w-4 shrink-0"
               />
-              <Label htmlFor="skipAnalyze" className="text-sm font-normal cursor-pointer">
+              <Label htmlFor="skipAnalyze" className="min-w-0 cursor-pointer text-sm font-normal leading-5">
                 Skip PDF analysis (use manually entered values only)
               </Label>
             </div>
