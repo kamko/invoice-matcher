@@ -17,7 +17,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
         className="fixed inset-0 bg-black/80"
         onClick={() => onOpenChange(false)}
       />
-      <div className="fixed left-[50%] top-[50%] z-50 w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%]">
+      <div className="fixed left-[50%] top-[50%] z-50 flex w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] justify-center">
         {children}
       </div>
     </div>
