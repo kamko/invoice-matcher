@@ -16,6 +16,10 @@ import { Checkbox } from '../components/ui/checkbox'
 import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check, Mail } from 'lucide-react'
 import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLegacyFioToken, hasPersistentVaultPassword, rememberVaultPassword } from '../lib/crypto'
 
+const DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = `Posielam doklady za obdobie {period}.
+
+{comments}`
+
 export function SettingsPage() {
   const auth = useAuth()
   const { data: settings, isLoading, refetch } = useSettings()
@@ -43,6 +47,7 @@ export function SettingsPage() {
   const [accountantFolder, setAccountantFolder] = useState('')
   const [accountantFolderName, setAccountantFolderName] = useState('')
   const [accountantEmail, setAccountantEmail] = useState('')
+  const [accountantEmailTemplate, setAccountantEmailTemplate] = useState(DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
   const [initialized, setInitialized] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [folderPickerTarget, setFolderPickerTarget] = useState<'invoice' | 'accountant'>('invoice')
@@ -104,6 +109,7 @@ export function SettingsPage() {
         setAccountantFolder(settings.accountant_folder_id || '')
         setAccountantFolderName(settings.accountant_folder_name || '')
         setAccountantEmail(settings.accountant_email || '')
+        setAccountantEmailTemplate(settings.accountant_email_template || DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
       }
 
       setInitialized(true)
@@ -188,6 +194,23 @@ export function SettingsPage() {
       refetch()
     } catch (error) {
       showApiError(error, 'Save accountant email')
+    }
+  }
+
+  const handleSaveAccountantEmailTemplate = async () => {
+    const template = accountantEmailTemplate.trim()
+    if (!template) {
+      showApiError(new Error('Email template cannot be empty'), 'Save email template')
+      return
+    }
+
+    try {
+      await setSetting.mutateAsync({ key: 'accountant_email_template', value: template })
+      setAccountantEmailTemplate(template)
+      showSuccess('Summary email template saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save email template')
     }
   }
 
@@ -555,6 +578,34 @@ export function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   After a Drive export, the app sends a short period summary and any document comments to this address.
                 </p>
+
+                <div className="pt-2 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="accountant-email-template">Summary Email Template</Label>
+                    <span className="text-xs text-muted-foreground">{accountantEmailTemplate.length}/1000</span>
+                  </div>
+                  <textarea
+                    id="accountant-email-template"
+                    value={accountantEmailTemplate}
+                    onChange={(event) => setAccountantEmailTemplate(event.target.value)}
+                    maxLength={1000}
+                    rows={5}
+                    className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-xs text-muted-foreground">
+                      Use <code>{'{period}'}</code> for MM/YYYY and <code>{'{comments}'}</code> for the optional document comment list.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSaveAccountantEmailTemplate}
+                      disabled={setSetting.isPending || !accountantEmailTemplate.trim()}
+                    >
+                      Save Template
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
           </CardContent>

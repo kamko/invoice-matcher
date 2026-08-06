@@ -18,7 +18,7 @@ from web.config import settings
 from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache, User, UserSetting
 from web.routers.gdrive import get_gdrive_service_for_user
-from web.services.email_service import send_accountant_summary
+from web.services.email_service import DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE, send_accountant_summary
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 ACCOUNTANT_FOLDER_NAMES = {
@@ -398,6 +398,15 @@ def copy_to_accountant_folder(
     if send_summary_email and not settings.mailjet_enabled:
         raise HTTPException(status_code=503, detail="Mailjet is not configured on the server")
     accountant_email = _get_accountant_email(db, user.id) if send_summary_email else None
+    email_template_setting = db.query(UserSetting).filter(
+        UserSetting.user_id == user.id,
+        UserSetting.key == "accountant_email_template",
+    ).first()
+    accountant_email_template = (
+        email_template_setting.value
+        if email_template_setting and email_template_setting.value
+        else DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
+    )
 
     # Parse month
     try:
@@ -510,6 +519,7 @@ def copy_to_accountant_folder(
                     year,
                     mon,
                     successful_exports,
+                    accountant_email_template,
                 )
                 email_result["status"] = "sent"
                 email_result["message_id"] = message_id

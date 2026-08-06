@@ -7,23 +7,36 @@ import requests
 from web.config import settings
 from web.database.models import Invoice
 
+DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = "Posielam doklady za obdobie {period}.\n\n{comments}"
 
-def build_accountant_email_body(year: int, month: int, invoices: Iterable[Invoice]) -> str:
+
+def build_accountant_email_body(
+    year: int,
+    month: int,
+    invoices: Iterable[Invoice],
+    template: str = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+) -> str:
     """Build the deliberately short Slovak export summary."""
-    lines = [f"Posielam doklady za obdobie {month:02d}/{year}."]
     comments = [
         (invoice.filename, invoice.comment.strip())
         for invoice in invoices
         if invoice.comment and invoice.comment.strip()
     ]
 
+    comment_lines = []
     if comments:
-        lines.extend(["", "Komentáre k dokladom:"])
+        comment_lines.append("Komentáre k dokladom:")
         for filename, comment in comments:
             normalized_comment = " ".join(comment.splitlines())
-            lines.append(f"- {filename}: {normalized_comment}")
+            comment_lines.append(f"- {filename}: {normalized_comment}")
 
-    return "\n".join(lines)
+    body_template = template.strip() or DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
+    return (
+        body_template
+        .replace("{period}", f"{month:02d}/{year}")
+        .replace("{comments}", "\n".join(comment_lines))
+        .strip()
+    )
 
 
 def send_accountant_summary(
@@ -31,6 +44,7 @@ def send_accountant_summary(
     year: int,
     month: int,
     invoices: Iterable[Invoice],
+    template: str = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
 ) -> str:
     """Send the period summary and return the Mailjet message id."""
     if not settings.mailjet_enabled:
@@ -48,7 +62,7 @@ def send_accountant_summary(
                     },
                     "To": [{"Email": recipient}],
                     "Subject": f"Doklady za obdobie {month:02d}/{year}",
-                    "TextPart": build_accountant_email_body(year, month, invoices),
+                    "TextPart": build_accountant_email_body(year, month, invoices, template),
                 }
             ]
         },
