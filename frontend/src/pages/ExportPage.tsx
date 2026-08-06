@@ -46,6 +46,7 @@ export function ExportPage() {
 
   const accountantFolderId = settings?.accountant_folder_id
   const accountantFolderName = settings?.accountant_folder_name
+  const companyName = settings?.company_name
   const accountantEmail = settings?.accountant_email
   const mailjetSenderEmail = settings?.mailjet_sender_email
   const { data: mailjetSenderStatus, isLoading: mailjetSenderStatusLoading, isError: mailjetSenderStatusError } = useMailjetSenderStatus(
@@ -53,7 +54,8 @@ export function ExportPage() {
     Boolean(appConfig?.mailjet_enabled)
   )
   const summaryEmailReady = Boolean(
-    accountantEmail
+    companyName
+    && accountantEmail
     && mailjetSenderEmail
     && appConfig?.mailjet_enabled
     && mailjetSenderStatus?.active
@@ -204,7 +206,9 @@ export function ExportPage() {
 
               {gdriveStatus?.authenticated && accountantFolderId && !summaryEmailReady && (
                 <p className="text-sm text-orange-700">
-                  {!accountantEmail
+                  {!companyName
+                    ? 'Add the company name in Settings before exporting.'
+                    : !accountantEmail
                     ? 'Add the accountant email in Settings before exporting.'
                     : !mailjetSenderEmail
                       ? 'Add the Mailjet sender email in Settings before exporting.'

@@ -19,6 +19,7 @@ import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLe
 const DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = `Posielam doklady za obdobie {period}.
 
 {comments}`
+const DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE = '{company_name} - Doklady za obdobie {period}'
 const DEFAULT_MAILJET_SENDER_NAME = 'Invoice Matcher'
 
 export function SettingsPage() {
@@ -52,9 +53,11 @@ export function SettingsPage() {
   const [invoiceFolderName, setInvoiceFolderName] = useState('')
   const [accountantFolder, setAccountantFolder] = useState('')
   const [accountantFolderName, setAccountantFolderName] = useState('')
+  const [companyName, setCompanyName] = useState('')
   const [accountantEmail, setAccountantEmail] = useState('')
   const [mailjetSenderName, setMailjetSenderName] = useState(DEFAULT_MAILJET_SENDER_NAME)
   const [mailjetSenderEmail, setMailjetSenderEmail] = useState('')
+  const [accountantEmailSubjectTemplate, setAccountantEmailSubjectTemplate] = useState(DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE)
   const [accountantEmailTemplate, setAccountantEmailTemplate] = useState(DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
   const [initialized, setInitialized] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
@@ -118,9 +121,11 @@ export function SettingsPage() {
     setInvoiceFolderName(settings.invoice_parent_folder_name || '')
     setAccountantFolder(settings.accountant_folder_id || '')
     setAccountantFolderName(settings.accountant_folder_name || '')
+    setCompanyName(settings.company_name || '')
     setAccountantEmail(settings.accountant_email || '')
     setMailjetSenderName(settings.mailjet_sender_name || DEFAULT_MAILJET_SENDER_NAME)
     setMailjetSenderEmail(settings.mailjet_sender_email || '')
+    setAccountantEmailSubjectTemplate(settings.accountant_email_subject_template || DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE)
     setAccountantEmailTemplate(settings.accountant_email_template || DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
     setInitialized(true)
   }, [settings, fioVault, fioVaultLoading, initialized, isLoading])
@@ -206,6 +211,23 @@ export function SettingsPage() {
     }
   }
 
+  const handleSaveCompanyName = async () => {
+    const normalizedCompanyName = companyName.trim()
+    if (!normalizedCompanyName) {
+      showApiError(new Error('Enter a company name'), 'Save company name')
+      return
+    }
+
+    try {
+      await setSetting.mutateAsync({ key: 'company_name', value: normalizedCompanyName })
+      setCompanyName(normalizedCompanyName)
+      showSuccess('Company name saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save company name')
+    }
+  }
+
   const handleSaveMailjetSender = async () => {
     const senderName = mailjetSenderName.trim()
     const senderEmail = mailjetSenderEmail.trim()
@@ -227,6 +249,26 @@ export function SettingsPage() {
       refetch()
     } catch (error) {
       showApiError(error, 'Save Mailjet sender')
+    }
+  }
+
+  const handleSaveAccountantEmailSubjectTemplate = async () => {
+    const template = accountantEmailSubjectTemplate.trim()
+    if (!template.includes('{company_name}') || !template.includes('{period}')) {
+      showApiError(
+        new Error('Subject template must contain {company_name} and {period}'),
+        'Save subject template'
+      )
+      return
+    }
+
+    try {
+      await setSetting.mutateAsync({ key: 'accountant_email_subject_template', value: template })
+      setAccountantEmailSubjectTemplate(template)
+      showSuccess('Subject template saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save subject template')
     }
   }
 
@@ -588,6 +630,49 @@ export function SettingsPage() {
                   </span>
                 </div>
 
+                <Label htmlFor="company-name">Company Name</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="company-name"
+                    value={companyName}
+                    onChange={(event) => setCompanyName(event.target.value)}
+                    maxLength={255}
+                    placeholder="Your organization"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleSaveCompanyName}
+                    disabled={setSetting.isPending || !companyName.trim()}
+                  >
+                    <Save className="h-4 w-4 mr-1" />
+                    Save
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Used wherever the subject template contains <code>{'{company_name}'}</code>.
+                </p>
+
+                <Label htmlFor="accountant-email-subject-template">Subject Template</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="accountant-email-subject-template"
+                    value={accountantEmailSubjectTemplate}
+                    onChange={(event) => setAccountantEmailSubjectTemplate(event.target.value)}
+                    maxLength={255}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveAccountantEmailSubjectTemplate}
+                    disabled={setSetting.isPending || !accountantEmailSubjectTemplate.trim()}
+                  >
+                    Save Subject
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Required tokens: <code>{'{company_name}'}</code> and <code>{'{period}'}</code>.
+                </p>
+
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="mailjet-sender-name">Sender Name</Label>
@@ -667,7 +752,7 @@ export function SettingsPage() {
 
                 <div className="pt-2 space-y-2">
                   <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="accountant-email-template">Summary Email Template</Label>
+                    <Label htmlFor="accountant-email-template">Message Template</Label>
                     <span className="text-xs text-muted-foreground">{accountantEmailTemplate.length}/1000</span>
                   </div>
                   <textarea
