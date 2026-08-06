@@ -63,6 +63,7 @@ export function InvoicesPage() {
   const [uploadDate, setUploadDate] = useState('')
   const [uploadAmount, setUploadAmount] = useState('')
   const [uploadPaymentType, setUploadPaymentType] = useState('card')
+  const [uploadComment, setUploadComment] = useState('')
   const [uploadSkipAnalyze, setUploadSkipAnalyze] = useState(false)
   const [uploadAnalyzing, setUploadAnalyzing] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -167,6 +168,7 @@ export function InvoicesPage() {
         invoiceDate: uploadDate || undefined,
         paymentType: uploadPaymentType || 'card',  // Default to card if empty
         amount: uploadAmount || undefined,
+        comment: uploadComment.trim() || undefined,
         gdriveFolderId: folderId,
         skipAnalyze: uploadSkipAnalyze,
       })
@@ -188,6 +190,7 @@ export function InvoicesPage() {
     setUploadDate('')
     setUploadAmount('')
     setUploadPaymentType('card')
+    setUploadComment('')
     setUploadSkipAnalyze(false)
   }
 
@@ -852,6 +855,25 @@ export function InvoicesPage() {
                 />
               </div>
               <div />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="upload-comment">Accountant Comment</Label>
+                <span className="text-xs text-muted-foreground">{uploadComment.length}/2000</span>
+              </div>
+              <textarea
+                id="upload-comment"
+                value={uploadComment}
+                onChange={(event) => setUploadComment(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Optional context for the summary email"
+                className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+              <p className="text-xs text-muted-foreground">
+                Included when this document is emailed to the accountant.
+              </p>
             </div>
 
             {/* Filename Preview */}
