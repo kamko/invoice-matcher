@@ -177,6 +177,7 @@ async def upload_invoice(
     document_type: Optional[str] = Form(None),
     amount: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
+    comment: Optional[str] = Form(None, max_length=2000),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
     skip_analyze: Optional[bool] = Form(False),  # Skip PDF analysis, use provided values
     user: User = Depends(get_current_user),
@@ -289,6 +290,7 @@ async def upload_invoice(
             payment_type=final_type,
             vs=parsed.get('vs'),
             iban=parsed.get('iban'),
+            comment=comment.strip() if comment and comment.strip() else None,
             is_credit_note=parsed.get('is_credit_note', False),
             status='unmatched',
             created_at=datetime.utcnow(),
