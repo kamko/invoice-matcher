@@ -514,7 +514,13 @@ def get_accountant_email_preview(
         "sender_email": _get_setting_value(db, user.id, "mailjet_sender_email"),
         "to": _get_setting_value(db, user.id, "accountant_email"),
         "bcc": user.email,
-        "body": build_accountant_email_body(year, mon, invoices, template),
+        "body": build_accountant_email_body(
+            year,
+            mon,
+            invoices,
+            template,
+            company_name,
+        ),
         "comment_count": sum(
             1 for invoice in invoices if invoice.comment and invoice.comment.strip()
         ),

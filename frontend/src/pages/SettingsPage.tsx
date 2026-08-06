@@ -765,7 +765,7 @@ export function SettingsPage() {
                   />
                   <div className="flex items-start justify-between gap-4">
                     <p className="text-xs text-muted-foreground">
-                      Use <code>{'{period}'}</code> for MM/YYYY and <code>{'{comments}'}</code> for the optional document comment list.
+                      Available tokens: <code>{'{company_name}'}</code>, <code>{'{period}'}</code>, and <code>{'{comments}'}</code>.
                     </p>
                     <Button
                       size="sm"

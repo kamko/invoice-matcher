@@ -128,6 +128,7 @@ def build_accountant_email_body(
     month: int,
     invoices: Iterable[Invoice],
     template: str = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+    company_name: str = "",
 ) -> str:
     """Build the deliberately short Slovak export summary."""
     comments = [
@@ -144,7 +145,11 @@ def build_accountant_email_body(
             comment_lines.append(f"- {filename}: {normalized_comment}")
 
     body_template = template.strip() or DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
-    rendered = body_template.replace("{period}", f"{month:02d}/{year}")
+    rendered = (
+        body_template
+        .replace("{company_name}", company_name.strip())
+        .replace("{period}", f"{month:02d}/{year}")
+    )
     if comment_lines:
         return rendered.replace("{comments}", "\n".join(comment_lines)).strip()
 
@@ -190,7 +195,13 @@ def send_accountant_summary(
         "TextPart": (
             body_override.strip()
             if body_override and body_override.strip()
-            else build_accountant_email_body(year, month, invoices, template)
+            else build_accountant_email_body(
+                year,
+                month,
+                invoices,
+                template,
+                company_name,
+            )
         ),
     }
     if bcc_email and bcc_email.strip().lower() != recipient.strip().lower():
