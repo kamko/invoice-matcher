@@ -99,6 +99,7 @@ export interface Invoice {
   payment_type?: string
   vs?: string
   iban?: string
+  comment?: string
   is_credit_note: boolean
   status: 'unmatched' | 'matched' | 'cash' | 'exported'
   transaction_id?: string
@@ -290,12 +291,13 @@ export function useMonthlySummary() {
 export function useCopyToGDrive() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement }: {
+    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement, sendSummaryEmail }: {
       yearMonth: string
       folderId: string
       markExported: boolean
       fioToken?: string
       includeMonthlyStatement: boolean
+      sendSummaryEmail: boolean
     }) =>
       fetchJson<{
         success: boolean
@@ -304,6 +306,7 @@ export function useCopyToGDrive() {
         total: number
         errors: string[]
         statement: { filename: string; status: 'uploaded' | 'skipped' | 'failed' | 'missing_token' | 'not_requested' }
+        email: { status: 'sent' | 'failed' | 'not_requested'; recipient?: string; error?: string; message_id?: string }
       }>(
         `/export/${yearMonth}/copy-to-gdrive?folder_id=${encodeURIComponent(folderId)}&mark_exported=${markExported}`,
         {
@@ -311,6 +314,7 @@ export function useCopyToGDrive() {
           body: JSON.stringify({
             fio_token: fioToken || '',
             include_monthly_statement: includeMonthlyStatement,
+            send_summary_email: sendSummaryEmail,
           }),
         }
       ),
@@ -428,6 +432,7 @@ export function useUpdateInvoice() {
       payment_type?: string
       vs?: string
       iban?: string
+      comment?: string
     }) =>
       fetchJson<Invoice>(`/invoices/${invoiceId}`, {
         method: 'PATCH',
@@ -844,6 +849,7 @@ export function useSetSetting() {
 export interface AppConfig {
   llm_model: string
   llm_enabled: boolean
+  mailjet_enabled: boolean
 }
 
 export function useAppConfig() {

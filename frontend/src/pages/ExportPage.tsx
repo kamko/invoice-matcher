@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, useAppConfig, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Label } from '../components/ui/label'
 import { Select } from '../components/ui/select'
 import { Checkbox } from '../components/ui/checkbox'
-import { Download, FileText, CheckCircle, Cloud, Loader2 } from 'lucide-react'
+import { Download, FileText, CheckCircle, Cloud, Loader2, Mail } from 'lucide-react'
 import { getLegacyFioToken, unlockStoredSecret } from '../lib/crypto'
 
 export function ExportPage() {
@@ -13,6 +13,7 @@ export function ExportPage() {
   const { data: settings } = useSettings()
   const { data: gdriveStatus } = useGDriveStatus()
   const { data: fioVault } = useFioVault()
+  const { data: appConfig } = useAppConfig()
   const copyToGDrive = useCopyToGDrive()
   const [selectedMonth, setSelectedMonth] = useState('')
   const [markExported, setMarkExported] = useState(false)
@@ -23,6 +24,8 @@ export function ExportPage() {
 
   const accountantFolderId = settings?.accountant_folder_id
   const accountantFolderName = settings?.accountant_folder_name
+  const accountantEmail = settings?.accountant_email
+  const summaryEmailReady = Boolean(accountantEmail && appConfig?.mailjet_enabled)
 
   const resolveFioToken = async () => {
     if (fioVault?.configured && fioVault.ciphertext && fioVault.nonce && fioVault.salt && fioVault.kdf && fioVault.kdf_params) {
@@ -62,6 +65,7 @@ export function ExportPage() {
         markExported,
         includeMonthlyStatement,
         fioToken,
+        sendSummaryEmail: true,
       })
       let message = `Copied ${result.copied} invoices`
       if (result.skipped > 0) {
@@ -75,7 +79,15 @@ export function ExportPage() {
       if (result.errors?.length > 0) {
         message += ` (${result.errors.length} errors)`
       }
-      showSuccess(message)
+      if (result.email.status === 'sent') {
+        message += `, emailed ${result.email.recipient}`
+        showSuccess(message)
+      } else {
+        showApiError(
+          new Error(`Documents were copied, but the summary email failed: ${result.email.error || 'unknown error'}`),
+          'Export'
+        )
+      }
     } catch (error) {
       showApiError(error, 'Copy to GDrive')
     } finally {
@@ -145,7 +157,7 @@ export function ExportPage() {
               {gdriveStatus?.authenticated && accountantFolderId && (
                 <Button
                   onClick={handleCopyToAccountant}
-                  disabled={!selectedMonth || isCopying}
+                  disabled={!selectedMonth || isCopying || !summaryEmailReady}
                   className="w-full"
                 >
                   {isCopying ? (
@@ -153,8 +165,23 @@ export function ExportPage() {
                   ) : (
                     <Cloud className="h-4 w-4 mr-2" />
                   )}
-                  Copy to Accountant ({accountantFolderName || 'GDrive'})
+                  Copy & Email Accountant
                 </Button>
+              )}
+
+              {gdriveStatus?.authenticated && accountantFolderId && !summaryEmailReady && (
+                <p className="text-sm text-orange-700">
+                  {!accountantEmail
+                    ? 'Add the accountant email in Settings before exporting.'
+                    : 'Configure Mailjet on the server before exporting.'}
+                </p>
+              )}
+
+              {summaryEmailReady && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Mail className="h-4 w-4" />
+                  <span>Summary will be sent to {accountantEmail}</span>
+                </div>
               )}
             </div>
 
@@ -247,6 +274,7 @@ export function ExportPage() {
               ({accountantFolderName || accountantFolderId}) and routes them by document type into
               `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`. If you enable
               "Include monthly PDF statement", the app also uploads the monthly Fio statement PDF to `OSTATNE`.
+              After the copy succeeds, it emails the configured accountant with the period and any comments saved on exported documents.
             </p>
           )}
         </CardContent>
