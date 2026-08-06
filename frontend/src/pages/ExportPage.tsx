@@ -1,11 +1,23 @@
-import { useState } from 'react'
-import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, useAppConfig, useMailjetSenderStatus, showApiError, showSuccess } from '../api/client'
+import { useEffect, useState } from 'react'
+import {
+  useDashboard,
+  useMonthStats,
+  useCopyToGDrive,
+  useSettings,
+  useGDriveStatus,
+  useFioVault,
+  useAppConfig,
+  useMailjetSenderStatus,
+  useAccountantEmailPreview,
+  showApiError,
+  showSuccess,
+} from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Label } from '../components/ui/label'
 import { Select } from '../components/ui/select'
 import { Checkbox } from '../components/ui/checkbox'
-import { Download, FileText, CheckCircle, Cloud, Loader2, Mail } from 'lucide-react'
+import { Download, FileText, CheckCircle, Cloud, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { getLegacyFioToken, unlockStoredSecret } from '../lib/crypto'
 
 export function ExportPage() {
@@ -19,8 +31,18 @@ export function ExportPage() {
   const [markExported, setMarkExported] = useState(false)
   const [includeMonthlyStatement, setIncludeMonthlyStatement] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
+  const [emailBody, setEmailBody] = useState('')
 
   const { data: stats, isLoading: statsLoading } = useMonthStats(selectedMonth || null)
+  const {
+    data: emailPreview,
+    isLoading: emailPreviewLoading,
+    isError: emailPreviewError,
+  } = useAccountantEmailPreview(selectedMonth || null)
+
+  useEffect(() => {
+    setEmailBody(emailPreview?.body || '')
+  }, [emailPreview?.body, selectedMonth])
 
   const accountantFolderId = settings?.accountant_folder_id
   const accountantFolderName = settings?.accountant_folder_name
@@ -76,6 +98,7 @@ export function ExportPage() {
         includeMonthlyStatement,
         fioToken,
         sendSummaryEmail: true,
+        emailBody,
       })
       let message = `Copied ${result.copied} invoices`
       if (result.skipped > 0) {
@@ -167,7 +190,7 @@ export function ExportPage() {
               {gdriveStatus?.authenticated && accountantFolderId && (
                 <Button
                   onClick={handleCopyToAccountant}
-                  disabled={!selectedMonth || isCopying || !summaryEmailReady}
+                  disabled={!selectedMonth || isCopying || !summaryEmailReady || !emailBody.trim()}
                   className="w-full"
                 >
                   {isCopying ? (
@@ -267,6 +290,78 @@ export function ExportPage() {
               )}
             </div>
           </div>
+
+          {selectedMonth && (
+            <section className="space-y-4 border-t pt-6" aria-labelledby="email-preview-heading">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 id="email-preview-heading" className="font-medium">Email Preview</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Edit the message for this export. Your saved template will not change.
+                  </p>
+                </div>
+                {emailPreview && (
+                  <p className="text-xs text-muted-foreground">
+                    {emailPreview.invoice_count} documents · {emailPreview.comment_count} comments
+                  </p>
+                )}
+              </div>
+
+              {emailPreviewLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Preparing preview...
+                </div>
+              ) : emailPreviewError || !emailPreview ? (
+                <p className="text-sm text-destructive">Could not prepare the email preview.</p>
+              ) : (
+                <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+                  <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[5rem_1fr]">
+                    <dt className="text-muted-foreground">From</dt>
+                    <dd className="break-all">
+                      {emailPreview.sender_name} &lt;{emailPreview.sender_email || 'not configured'}&gt;
+                    </dd>
+                    <dt className="text-muted-foreground">To</dt>
+                    <dd className="break-all">{emailPreview.to || 'not configured'}</dd>
+                    <dt className="text-muted-foreground">Bcc</dt>
+                    <dd className="break-all">{emailPreview.bcc}</dd>
+                    <dt className="text-muted-foreground">Subject</dt>
+                    <dd>{emailPreview.subject}</dd>
+                  </dl>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="accountant-email-body">Message</Label>
+                      <span className="text-xs text-muted-foreground">{emailBody.length}/10000</span>
+                    </div>
+                    <textarea
+                      id="accountant-email-body"
+                      value={emailBody}
+                      onChange={(event) => setEmailBody(event.target.value)}
+                      maxLength={10000}
+                      rows={8}
+                      className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-muted-foreground">
+                        A private copy will be sent to your account email.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEmailBody(emailPreview.body)}
+                        disabled={emailBody === emailPreview.body}
+                      >
+                        <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                        Reset message
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
         </CardContent>
       </Card>
 

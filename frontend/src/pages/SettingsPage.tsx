@@ -26,7 +26,7 @@ export function SettingsPage() {
   const { data: settings, isLoading, refetch } = useSettings()
   const setSetting = useSetSetting()
   const { data: gdriveStatus, refetch: refetchGDrive } = useGDriveStatus()
-  const { data: fioVault } = useFioVault()
+  const { data: fioVault, isLoading: fioVaultLoading } = useFioVault()
   const saveFioVault = useSaveFioVault()
   const deleteFioVault = useDeleteFioVault()
   const { data: appConfig } = useAppConfig()
@@ -104,27 +104,26 @@ export function SettingsPage() {
 
   // Initialize form values from localStorage and settings
   useEffect(() => {
-    if (!initialized) {
-      const legacyToken = getLegacyFioToken()
-      if (legacyToken && !fioVault?.configured) {
-        setFioToken(legacyToken)
-        setHasLegacyToken(true)
-      }
-
-      if (settings) {
-        setInvoiceFolder(settings.invoice_parent_folder_id || '')
-        setInvoiceFolderName(settings.invoice_parent_folder_name || '')
-        setAccountantFolder(settings.accountant_folder_id || '')
-        setAccountantFolderName(settings.accountant_folder_name || '')
-        setAccountantEmail(settings.accountant_email || '')
-        setMailjetSenderName(settings.mailjet_sender_name || DEFAULT_MAILJET_SENDER_NAME)
-        setMailjetSenderEmail(settings.mailjet_sender_email || '')
-        setAccountantEmailTemplate(settings.accountant_email_template || DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
-      }
-
-      setInitialized(true)
+    if (initialized || isLoading || fioVaultLoading || !settings) {
+      return
     }
-  }, [settings, fioVault, initialized])
+
+    const legacyToken = getLegacyFioToken()
+    if (legacyToken && !fioVault?.configured) {
+      setFioToken(legacyToken)
+      setHasLegacyToken(true)
+    }
+
+    setInvoiceFolder(settings.invoice_parent_folder_id || '')
+    setInvoiceFolderName(settings.invoice_parent_folder_name || '')
+    setAccountantFolder(settings.accountant_folder_id || '')
+    setAccountantFolderName(settings.accountant_folder_name || '')
+    setAccountantEmail(settings.accountant_email || '')
+    setMailjetSenderName(settings.mailjet_sender_name || DEFAULT_MAILJET_SENDER_NAME)
+    setMailjetSenderEmail(settings.mailjet_sender_email || '')
+    setAccountantEmailTemplate(settings.accountant_email_template || DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
+    setInitialized(true)
+  }, [settings, fioVault, fioVaultLoading, initialized, isLoading])
 
   const handleSaveFioToken = async () => {
     if (!fioToken.trim()) {
