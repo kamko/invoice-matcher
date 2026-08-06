@@ -92,27 +92,33 @@ def send_accountant_summary(
     month: int,
     invoices: Iterable[Invoice],
     template: str = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+    body_override: str | None = None,
+    bcc_email: str | None = None,
 ) -> str:
     """Send the period summary and return the Mailjet message id."""
     if not settings.mailjet_enabled:
         raise RuntimeError("Mailjet is not configured on the server")
 
+    message = {
+        "From": {
+            "Email": sender_email,
+            "Name": sender_name,
+        },
+        "To": [{"Email": recipient}],
+        "Subject": f"Doklady za obdobie {month:02d}/{year}",
+        "TextPart": (
+            body_override.strip()
+            if body_override and body_override.strip()
+            else build_accountant_email_body(year, month, invoices, template)
+        ),
+    }
+    if bcc_email and bcc_email.strip().lower() != recipient.strip().lower():
+        message["Bcc"] = [{"Email": bcc_email.strip()}]
+
     response = requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(settings.mailjet_api_key, settings.mailjet_secret_key),
-        json={
-            "Messages": [
-                {
-                    "From": {
-                        "Email": sender_email,
-                        "Name": sender_name,
-                    },
-                    "To": [{"Email": recipient}],
-                    "Subject": f"Doklady za obdobie {month:02d}/{year}",
-                    "TextPart": build_accountant_email_body(year, month, invoices, template),
-                }
-            ]
-        },
+        json={"Messages": [message]},
         timeout=20,
     )
 

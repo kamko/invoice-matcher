@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -20,6 +20,7 @@ from web.database.models import Invoice, Transaction, PDFCache, User, UserSettin
 from web.routers.gdrive import get_gdrive_service_for_user
 from web.services.email_service import (
     DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+    build_accountant_email_body,
     get_mailjet_sender_status,
     send_accountant_summary,
 )
@@ -38,6 +39,7 @@ class CopyToAccountantRequest(BaseModel):
     fio_token: Optional[str] = None
     include_monthly_statement: bool = False
     send_summary_email: bool = False
+    email_body: Optional[str] = Field(default=None, max_length=10000)
 
 
 def _get_email_setting(db: Session, user_id: int, key: str, label: str) -> str:
@@ -60,6 +62,52 @@ def _get_email_setting(db: Session, user_id: int, key: str, label: str) -> str:
             detail=f"Configure a valid {label} email address in Settings first",
         )
     return recipient
+
+
+def _get_setting_value(
+    db: Session,
+    user_id: int,
+    key: str,
+    default: str = "",
+) -> str:
+    """Return a trimmed user setting or its default value."""
+    setting = db.query(UserSetting).filter(
+        UserSetting.user_id == user_id,
+        UserSetting.key == key,
+    ).first()
+    if not setting or not setting.value:
+        return default
+    return setting.value.strip() or default
+
+
+def _parse_year_month(year_month: str) -> tuple[int, int]:
+    """Parse and validate an export month in YYYY-MM format."""
+    try:
+        year, month = map(int, year_month.split('-'))
+        datetime(year, month, 1)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM")
+    return year, month
+
+
+def _get_exportable_invoices(
+    db: Session,
+    user_id: int,
+    year: int,
+    month: int,
+) -> list[Invoice]:
+    """Return file-backed invoices that the accountant export will process."""
+    from calendar import monthrange
+
+    start_date = datetime(year, month, 1).date()
+    end_date = datetime(year, month, monthrange(year, month)[1]).date()
+    return db.query(Invoice).filter(
+        Invoice.status.in_(['matched', 'cash']),
+        Invoice.invoice_date >= start_date,
+        Invoice.invoice_date <= end_date,
+        Invoice.gdrive_file_id.isnot(None),
+        Invoice.user_id == user_id,
+    ).all()
 
 
 def _normalize_document_type(value: Optional[str]) -> str:
@@ -385,6 +433,42 @@ def get_monthly_summary(
     return {"months": result}
 
 
+@router.get("/export/{year_month}/email-preview")
+def get_accountant_email_preview(
+    year_month: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Preview the exact accountant email body for the selected export month."""
+    year, mon = _parse_year_month(year_month)
+    invoices = _get_exportable_invoices(db, user.id, year, mon)
+    template = _get_setting_value(
+        db,
+        user.id,
+        "accountant_email_template",
+        DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+    )
+    sender_name = _get_setting_value(
+        db,
+        user.id,
+        "mailjet_sender_name",
+        "Invoice Matcher",
+    )
+
+    return {
+        "subject": f"Doklady za obdobie {mon:02d}/{year}",
+        "sender_name": sender_name[:255],
+        "sender_email": _get_setting_value(db, user.id, "mailjet_sender_email"),
+        "to": _get_setting_value(db, user.id, "accountant_email"),
+        "bcc": user.email,
+        "body": build_accountant_email_body(year, mon, invoices, template),
+        "comment_count": sum(
+            1 for invoice in invoices if invoice.comment and invoice.comment.strip()
+        ),
+        "invoice_count": len(invoices),
+    }
+
+
 @router.post("/export/{year_month}/copy-to-gdrive")
 def copy_to_accountant_folder(
     year_month: str,
@@ -399,6 +483,13 @@ def copy_to_accountant_folder(
     fio_token = (payload.fio_token or "").strip() if payload else ""
     include_monthly_statement = payload.include_monthly_statement if payload else False
     send_summary_email = payload.send_summary_email if payload else False
+    email_body_override = payload.email_body if payload else None
+    if (
+        send_summary_email
+        and email_body_override is not None
+        and not email_body_override.strip()
+    ):
+        raise HTTPException(status_code=400, detail="Email body cannot be empty")
     if send_summary_email and not settings.mailjet_enabled:
         raise HTTPException(status_code=503, detail="Mailjet is not configured on the server")
     accountant_email = None
@@ -437,25 +528,8 @@ def copy_to_accountant_folder(
         if email_template_setting and email_template_setting.value:
             accountant_email_template = email_template_setting.value
 
-    # Parse month
-    try:
-        year, mon = map(int, year_month.split('-'))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM")
-
-    from calendar import monthrange
-    start_date = datetime(year, mon, 1).date()
-    last_day = monthrange(year, mon)[1]
-    end_date = datetime(year, mon, last_day).date()
-
-    # Get matched/cash (non-exported) invoices for this month
-    invoices = db.query(Invoice).filter(
-        Invoice.status.in_(['matched', 'cash']),
-        Invoice.invoice_date >= start_date,
-        Invoice.invoice_date <= end_date,
-        Invoice.gdrive_file_id.isnot(None),
-        Invoice.user_id == user.id,
-    ).all()
+    year, mon = _parse_year_month(year_month)
+    invoices = _get_exportable_invoices(db, user.id, year, mon)
 
     if not invoices:
         raise HTTPException(status_code=404, detail="No matched/cash invoices to export for this month")
@@ -551,6 +625,8 @@ def copy_to_accountant_folder(
                     mon,
                     successful_exports,
                     accountant_email_template,
+                    body_override=email_body_override,
+                    bcc_email=user.email,
                 )
                 email_result["status"] = "sent"
                 email_result["message_id"] = message_id

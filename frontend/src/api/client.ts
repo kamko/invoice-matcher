@@ -291,13 +291,14 @@ export function useMonthlySummary() {
 export function useCopyToGDrive() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement, sendSummaryEmail }: {
+    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement, sendSummaryEmail, emailBody }: {
       yearMonth: string
       folderId: string
       markExported: boolean
       fioToken?: string
       includeMonthlyStatement: boolean
       sendSummaryEmail: boolean
+      emailBody?: string
     }) =>
       fetchJson<{
         success: boolean
@@ -315,6 +316,7 @@ export function useCopyToGDrive() {
             fio_token: fioToken || '',
             include_monthly_statement: includeMonthlyStatement,
             send_summary_email: sendSummaryEmail,
+            email_body: emailBody,
           }),
         }
       ),
@@ -322,6 +324,25 @@ export function useCopyToGDrive() {
       queryClient.invalidateQueries({ queryKey: ['invoices'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
+  })
+}
+
+export interface AccountantEmailPreview {
+  subject: string
+  sender_name: string
+  sender_email: string
+  to: string
+  bcc: string
+  body: string
+  comment_count: number
+  invoice_count: number
+}
+
+export function useAccountantEmailPreview(yearMonth: string | null) {
+  return useQuery({
+    queryKey: ['accountant-email-preview', yearMonth],
+    queryFn: () => fetchJson<AccountantEmailPreview>(`/export/${yearMonth}/email-preview`),
+    enabled: Boolean(yearMonth),
   })
 }
 
