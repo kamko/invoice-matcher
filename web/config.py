@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_model: str = "google/gemini-2.5-flash-lite"
 
+    # Mailjet transactional email
+    mailjet_api_key: str = ""
+    mailjet_secret_key: str = ""
+    mailjet_sender_email: str = ""
+    mailjet_sender_name: str = "Invoice Matcher"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -56,6 +62,14 @@ class Settings(BaseSettings):
             for item in self.allowed_email_domains.split(",")
             if item.strip()
         }
+
+    @property
+    def mailjet_enabled(self) -> bool:
+        return bool(
+            self.mailjet_api_key
+            and self.mailjet_secret_key
+            and self.mailjet_sender_email
+        )
 
 
 settings = Settings()

@@ -40,7 +40,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw } from 'lucide-react'
+import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText } from 'lucide-react'
 
 export function InvoicesPage() {
   const search = useSearch()
@@ -76,6 +76,7 @@ export function InvoicesPage() {
   const [editVs, setEditVs] = useState('')
   const [editIban, setEditIban] = useState('')
   const [editCurrency, setEditCurrency] = useState('EUR')
+  const [editComment, setEditComment] = useState('')
   // Track parsed/suggested values from reanalyze
   const [parsedValues, setParsedValues] = useState<{
     vendor?: string
@@ -341,6 +342,7 @@ export function InvoicesPage() {
     setEditPaymentType(validPaymentTypes.includes(inv.payment_type || '') ? inv.payment_type! : 'card')
     setEditVs(inv.vs || '')
     setEditIban(inv.iban || '')
+    setEditComment(inv.comment || '')
     setParsedValues(null) // Reset parsed values
     setShowEditModal(true)
   }
@@ -383,6 +385,7 @@ export function InvoicesPage() {
         payment_type: editPaymentType || undefined,
         vs: editVs || undefined,
         iban: editIban || undefined,
+        comment: editComment.trim(),
       })
       showSuccess(filenameChanged ? 'Invoice updated & renamed' : 'Invoice updated')
       setShowEditModal(false)
@@ -529,7 +532,8 @@ export function InvoicesPage() {
                   <TableRow key={inv.id} className={inv.status === 'unmatched' ? 'bg-orange-50' : ''}>
                     <TableCell>{inv.invoice_date || '-'}</TableCell>
                     <TableCell>
-                      <div className="max-w-xs truncate" title={inv.filename}>
+                      <div className="flex max-w-xs items-center gap-2">
+                        <div className="truncate" title={inv.filename}>
                         {inv.gdrive_file_id ? (
                           <a
                             href={`/api/invoices/${inv.id}/pdf`}
@@ -541,6 +545,15 @@ export function InvoicesPage() {
                           </a>
                         ) : (
                           inv.filename
+                        )}
+                        </div>
+                        {inv.comment && (
+                          <MessageSquareText
+                            className="h-4 w-4 shrink-0 text-muted-foreground"
+                            aria-label="Has accountant comment"
+                          >
+                            <title>{inv.comment}</title>
+                          </MessageSquareText>
                         )}
                       </div>
                     </TableCell>
@@ -1116,6 +1129,25 @@ export function InvoicesPage() {
                 </div>
               </div>
             )}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="invoice-comment">Accountant Comment</Label>
+                <span className="text-xs text-muted-foreground">{editComment.length}/2000</span>
+              </div>
+              <textarea
+                id="invoice-comment"
+                value={editComment}
+                onChange={(event) => setEditComment(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Context to include in the summary email"
+                className="flex w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+              <p className="text-xs text-muted-foreground">
+                Included only when this document is part of an accountant export.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEditModal(false)}>

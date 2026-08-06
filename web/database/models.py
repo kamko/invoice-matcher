@@ -122,6 +122,7 @@ class Invoice(Base):
     payment_type = Column(String(20), nullable=True)  # wire/card/cash
     vs = Column(String(50), nullable=True)  # Variable symbol (for wire)
     iban = Column(String(50), nullable=True)  # IBAN (for wire)
+    comment = Column(Text, nullable=True)  # Context included in the accountant summary email
     is_credit_note = Column(Boolean, default=False)
     status = Column(String(20), default='unmatched')  # unmatched/matched/cash/exported
     transaction_id = Column(String(100), nullable=True, index=True)  # FK to matched transaction

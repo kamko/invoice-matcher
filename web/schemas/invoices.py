@@ -17,6 +17,7 @@ class InvoiceBase(BaseModel):
     payment_type: Optional[str] = None  # wire/card/cash
     vs: Optional[str] = None
     iban: Optional[str] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
     is_credit_note: bool = False
 
 
@@ -37,6 +38,7 @@ class InvoiceUpdate(BaseModel):
     payment_type: Optional[str] = None
     vs: Optional[str] = None
     iban: Optional[str] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
     is_credit_note: Optional[bool] = None
     status: Optional[str] = None
 

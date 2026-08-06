@@ -13,7 +13,7 @@ import {
   DialogFooter,
 } from '../components/ui/dialog'
 import { Checkbox } from '../components/ui/checkbox'
-import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check } from 'lucide-react'
+import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check, Mail } from 'lucide-react'
 import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLegacyFioToken, hasPersistentVaultPassword, rememberVaultPassword } from '../lib/crypto'
 
 export function SettingsPage() {
@@ -42,6 +42,7 @@ export function SettingsPage() {
   const [invoiceFolderName, setInvoiceFolderName] = useState('')
   const [accountantFolder, setAccountantFolder] = useState('')
   const [accountantFolderName, setAccountantFolderName] = useState('')
+  const [accountantEmail, setAccountantEmail] = useState('')
   const [initialized, setInitialized] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [folderPickerTarget, setFolderPickerTarget] = useState<'invoice' | 'accountant'>('invoice')
@@ -102,6 +103,7 @@ export function SettingsPage() {
         setInvoiceFolderName(settings.invoice_parent_folder_name || '')
         setAccountantFolder(settings.accountant_folder_id || '')
         setAccountantFolderName(settings.accountant_folder_name || '')
+        setAccountantEmail(settings.accountant_email || '')
       }
 
       setInitialized(true)
@@ -169,6 +171,23 @@ export function SettingsPage() {
       refetch()
     } catch (error) {
       showApiError(error, 'Save accountant folder')
+    }
+  }
+
+  const handleSaveAccountantEmail = async () => {
+    const recipient = accountantEmail.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      showApiError(new Error('Enter a valid email address'), 'Save accountant email')
+      return
+    }
+
+    try {
+      await setSetting.mutateAsync({ key: 'accountant_email', value: recipient })
+      setAccountantEmail(recipient)
+      showSuccess('Accountant email saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save accountant email')
     }
   }
 
@@ -504,6 +523,39 @@ export function SettingsPage() {
                 Shared root folder used for accountant offload. The app routes files into
                 `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, or `OSTATNE`.
               </p>
+
+              <div className="pt-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="accountant-email">Accountant Email</Label>
+                  <span className={appConfig?.mailjet_enabled ? 'text-xs font-medium text-green-700' : 'text-xs font-medium text-orange-700'}>
+                    {appConfig?.mailjet_enabled ? 'Mailjet ready' : 'Mailjet not configured'}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="accountant-email"
+                      type="email"
+                      value={accountantEmail}
+                      onChange={(event) => setAccountantEmail(event.target.value)}
+                      placeholder="accountant@example.com"
+                      className="pl-9"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={handleSaveAccountantEmail}
+                    disabled={setSetting.isPending || !accountantEmail.trim()}
+                  >
+                    <Save className="h-4 w-4 mr-1" />
+                    Save
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  After a Drive export, the app sends a short period summary and any document comments to this address.
+                </p>
+              </div>
             </div>
           </CardContent>
         </Card>

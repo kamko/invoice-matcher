@@ -121,6 +121,7 @@ def get_config():
     return {
         "llm_model": settings.openrouter_model,
         "llm_enabled": bool(settings.openrouter_api_key),
+        "mailjet_enabled": settings.mailjet_enabled,
     }
 
 

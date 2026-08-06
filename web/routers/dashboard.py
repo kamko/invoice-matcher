@@ -3,6 +3,7 @@
 import io
 import zipfile
 from datetime import datetime
+from email.utils import parseaddr
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,9 +14,11 @@ from sqlalchemy import func
 
 from parsers.fio_api import fetch_monthly_statement_pdf
 from web.auth import get_current_user
+from web.config import settings
 from web.database import get_db
-from web.database.models import Invoice, Transaction, PDFCache, User
+from web.database.models import Invoice, Transaction, PDFCache, User, UserSetting
 from web.routers.gdrive import get_gdrive_service_for_user
+from web.services.email_service import send_accountant_summary
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 ACCOUNTANT_FOLDER_NAMES = {
@@ -30,6 +33,29 @@ class CopyToAccountantRequest(BaseModel):
 
     fio_token: Optional[str] = None
     include_monthly_statement: bool = False
+    send_summary_email: bool = False
+
+
+def _get_accountant_email(db: Session, user_id: int) -> str:
+    """Return and validate the configured accountant recipient."""
+    setting = db.query(UserSetting).filter(
+        UserSetting.user_id == user_id,
+        UserSetting.key == "accountant_email",
+    ).first()
+    recipient = (setting.value or "").strip() if setting else ""
+    _, parsed = parseaddr(recipient)
+    if (
+        not recipient
+        or "\n" in recipient
+        or "\r" in recipient
+        or parsed.lower() != recipient.lower()
+        or "@" not in parsed
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Configure a valid accountant email address in Settings first",
+        )
+    return recipient
 
 
 def _normalize_document_type(value: Optional[str]) -> str:
@@ -368,6 +394,10 @@ def copy_to_accountant_folder(
     gdrive_service = get_gdrive_service_for_user(db, user)
     fio_token = (payload.fio_token or "").strip() if payload else ""
     include_monthly_statement = payload.include_monthly_statement if payload else False
+    send_summary_email = payload.send_summary_email if payload else False
+    if send_summary_email and not settings.mailjet_enabled:
+        raise HTTPException(status_code=503, detail="Mailjet is not configured on the server")
+    accountant_email = _get_accountant_email(db, user.id) if send_summary_email else None
 
     # Parse month
     try:
@@ -400,6 +430,11 @@ def copy_to_accountant_folder(
     existing_files_by_folder: dict[str, set[str]] = {}
     statement_status = "not_requested"
     statement_filename = f"fio_statement_{year}-{mon:02d}.pdf"
+    email_result = {
+        "status": "not_requested",
+        "recipient": accountant_email,
+        "error": None,
+    }
 
     for invoice in invoices:
         document_type = _normalize_document_type(invoice.document_type)
@@ -464,6 +499,24 @@ def copy_to_accountant_folder(
             invoice.status = 'exported'
         db.commit()
 
+    if send_summary_email:
+        if not successful_exports:
+            email_result["status"] = "failed"
+            email_result["error"] = "No invoices were successfully exported"
+        else:
+            try:
+                message_id = send_accountant_summary(
+                    accountant_email,
+                    year,
+                    mon,
+                    successful_exports,
+                )
+                email_result["status"] = "sent"
+                email_result["message_id"] = message_id
+            except Exception as exc:
+                email_result["status"] = "failed"
+                email_result["error"] = str(exc)
+
     return {
         "success": True,
         "copied": copied,
@@ -475,4 +528,5 @@ def copy_to_accountant_folder(
             "filename": statement_filename,
             "status": statement_status,
         },
+        "email": email_result,
     }

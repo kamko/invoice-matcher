@@ -61,6 +61,7 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         payment_type=invoice.payment_type,
         vs=invoice.vs,
         iban=invoice.iban,
+        comment=invoice.comment,
         is_credit_note=invoice.is_credit_note,
         status=invoice.status,
         transaction_id=invoice.transaction_id,
