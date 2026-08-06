@@ -51,6 +51,20 @@ class AccountantEmailSubjectTests(unittest.TestCase):
 
 
 class AccountantEmailBodyTests(unittest.TestCase):
+    def test_renders_company_name_in_message_template(self):
+        result = build_accountant_email_body(
+            2026,
+            7,
+            [],
+            "Dobrý deň za {company_name}, obdobie {period}.",
+            "Organization",
+        )
+
+        self.assertEqual(
+            result,
+            "Dobrý deň za Organization, obdobie 07/2026.",
+        )
+
     def test_removes_empty_comments_line_without_extra_spacing(self):
         template = (
             "Pekny den,\n\n"

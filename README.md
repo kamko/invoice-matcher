@@ -101,7 +101,7 @@ The default email subject template is:
 {company_name} - Doklady za obdobie {period}
 ```
 
-Both subject tokens are required. The message template supports `{period}` and `{comments}`. When no document has a comment, the standalone `{comments}` line and excess spacing are removed.
+Both subject tokens are required. The message template supports `{company_name}`, `{period}`, and `{comments}`. When no document has a comment, the standalone `{comments}` line and excess spacing are removed.
 
 ## Data and Security
 
