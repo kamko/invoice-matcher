@@ -822,6 +822,20 @@ export function useSettings() {
   })
 }
 
+export function useMailjetSenderStatus(email?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['mailjet-sender-status', email],
+    queryFn: () => fetchJson<{
+      active: boolean
+      scope: 'address' | 'domain' | null
+      matched_sender: string | null
+    }>(`/settings/mailjet-sender-status?email=${encodeURIComponent(email || '')}`),
+    enabled: enabled && Boolean(email),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  })
+}
+
 export function useSetting(key: string) {
   return useQuery({
     queryKey: ['settings', key],

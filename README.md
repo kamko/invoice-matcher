@@ -36,7 +36,7 @@ Optional:
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL`
-- `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, and a verified `MAILJET_SENDER_EMAIL` for accountant summary emails
+- `MAILJET_API_KEY` and `MAILJET_SECRET_KEY` for accountant summary emails; configure a verified sender in the app Settings
 
 ## Run
 

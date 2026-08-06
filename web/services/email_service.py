@@ -10,6 +10,51 @@ from web.database.models import Invoice
 DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = "Posielam doklady za obdobie {period}.\n\n{comments}"
 
 
+def get_mailjet_sender_status(email: str) -> dict:
+    """Check whether an exact sender or its whole domain is active in Mailjet."""
+    if not settings.mailjet_enabled:
+        raise RuntimeError("Mailjet is not configured on the server")
+
+    normalized_email = email.strip().lower()
+    domain = normalized_email.rsplit("@", 1)[-1]
+    try:
+        response = requests.get(
+            "https://api.mailjet.com/v3/REST/sender",
+            auth=(settings.mailjet_api_key, settings.mailjet_secret_key),
+            params={"Limit": 100},
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError("Mailjet sender check failed: network error") from exc
+
+    try:
+        response.raise_for_status()
+        senders = response.json().get("Data", [])
+    except (ValueError, requests.HTTPError) as exc:
+        details = response.text.strip()[:500]
+        raise RuntimeError(
+            f"Mailjet sender check failed: {details or response.status_code}"
+        ) from exc
+
+    exact_match = None
+    domain_match = None
+    for sender in senders:
+        if str(sender.get("Status", "")).lower() != "active":
+            continue
+        candidate = str(sender.get("Email", "")).strip().lower()
+        if candidate == normalized_email:
+            exact_match = candidate
+            break
+        if candidate in {domain, f"*@{domain}"}:
+            domain_match = candidate
+
+    if exact_match:
+        return {"active": True, "scope": "address", "matched_sender": exact_match}
+    if domain_match:
+        return {"active": True, "scope": "domain", "matched_sender": domain_match}
+    return {"active": False, "scope": None, "matched_sender": None}
+
+
 def build_accountant_email_body(
     year: int,
     month: int,
@@ -41,6 +86,8 @@ def build_accountant_email_body(
 
 def send_accountant_summary(
     recipient: str,
+    sender_email: str,
+    sender_name: str,
     year: int,
     month: int,
     invoices: Iterable[Invoice],
@@ -57,8 +104,8 @@ def send_accountant_summary(
             "Messages": [
                 {
                     "From": {
-                        "Email": settings.mailjet_sender_email,
-                        "Name": settings.mailjet_sender_name,
+                        "Email": sender_email,
+                        "Name": sender_name,
                     },
                     "To": [{"Email": recipient}],
                     "Subject": f"Doklady za obdobie {month:02d}/{year}",

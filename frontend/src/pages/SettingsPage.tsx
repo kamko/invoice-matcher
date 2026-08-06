@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, showSuccess, showApiError } from '../api/client'
+import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, useMailjetSenderStatus, showSuccess, showApiError } from '../api/client'
 import { useAuth } from '../auth'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -19,6 +19,7 @@ import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLe
 const DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = `Posielam doklady za obdobie {period}.
 
 {comments}`
+const DEFAULT_MAILJET_SENDER_NAME = 'Invoice Matcher'
 
 export function SettingsPage() {
   const auth = useAuth()
@@ -29,6 +30,11 @@ export function SettingsPage() {
   const saveFioVault = useSaveFioVault()
   const deleteFioVault = useDeleteFioVault()
   const { data: appConfig } = useAppConfig()
+  const savedMailjetSenderEmail = settings?.mailjet_sender_email || ''
+  const { data: mailjetSenderStatus, isLoading: mailjetSenderStatusLoading, isError: mailjetSenderStatusError } = useMailjetSenderStatus(
+    savedMailjetSenderEmail,
+    Boolean(appConfig?.mailjet_enabled)
+  )
   const importGDrive = useImportGDrive()
   const getFolderInfo = useGDriveFolderInfo()
   const [isImporting, setIsImporting] = useState(false)
@@ -47,6 +53,8 @@ export function SettingsPage() {
   const [accountantFolder, setAccountantFolder] = useState('')
   const [accountantFolderName, setAccountantFolderName] = useState('')
   const [accountantEmail, setAccountantEmail] = useState('')
+  const [mailjetSenderName, setMailjetSenderName] = useState(DEFAULT_MAILJET_SENDER_NAME)
+  const [mailjetSenderEmail, setMailjetSenderEmail] = useState('')
   const [accountantEmailTemplate, setAccountantEmailTemplate] = useState(DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
   const [initialized, setInitialized] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
@@ -109,6 +117,8 @@ export function SettingsPage() {
         setAccountantFolder(settings.accountant_folder_id || '')
         setAccountantFolderName(settings.accountant_folder_name || '')
         setAccountantEmail(settings.accountant_email || '')
+        setMailjetSenderName(settings.mailjet_sender_name || DEFAULT_MAILJET_SENDER_NAME)
+        setMailjetSenderEmail(settings.mailjet_sender_email || '')
         setAccountantEmailTemplate(settings.accountant_email_template || DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE)
       }
 
@@ -194,6 +204,30 @@ export function SettingsPage() {
       refetch()
     } catch (error) {
       showApiError(error, 'Save accountant email')
+    }
+  }
+
+  const handleSaveMailjetSender = async () => {
+    const senderName = mailjetSenderName.trim()
+    const senderEmail = mailjetSenderEmail.trim()
+    if (!senderName) {
+      showApiError(new Error('Enter a sender name'), 'Save Mailjet sender')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail)) {
+      showApiError(new Error('Enter a valid sender email address'), 'Save Mailjet sender')
+      return
+    }
+
+    try {
+      await setSetting.mutateAsync({ key: 'mailjet_sender_name', value: senderName })
+      await setSetting.mutateAsync({ key: 'mailjet_sender_email', value: senderEmail })
+      setMailjetSenderName(senderName)
+      setMailjetSenderEmail(senderEmail)
+      showSuccess('Mailjet sender saved')
+      refetch()
+    } catch (error) {
+      showApiError(error, 'Save Mailjet sender')
     }
   }
 
@@ -549,11 +583,64 @@ export function SettingsPage() {
 
               <div className="pt-3 space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="accountant-email">Accountant Email</Label>
+                  <span className="text-sm font-medium">Summary Email</span>
                   <span className={appConfig?.mailjet_enabled ? 'text-xs font-medium text-green-700' : 'text-xs font-medium text-orange-700'}>
-                    {appConfig?.mailjet_enabled ? 'Mailjet ready' : 'Mailjet not configured'}
+                    {appConfig?.mailjet_enabled ? 'Mailjet API ready' : 'Mailjet API not configured'}
                   </span>
                 </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="mailjet-sender-name">Sender Name</Label>
+                    <Input
+                      id="mailjet-sender-name"
+                      value={mailjetSenderName}
+                      onChange={(event) => setMailjetSenderName(event.target.value)}
+                      maxLength={255}
+                      placeholder="Invoice Matcher"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="mailjet-sender-email">Sender Email</Label>
+                    <Input
+                      id="mailjet-sender-email"
+                      type="email"
+                      value={mailjetSenderEmail}
+                      onChange={(event) => setMailjetSenderEmail(event.target.value)}
+                      placeholder="invoices@example.com"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="text-xs">
+                    {mailjetSenderEmail.trim() !== savedMailjetSenderEmail ? (
+                      <span className="text-muted-foreground">Save the sender to check it in Mailjet.</span>
+                    ) : mailjetSenderStatusLoading ? (
+                      <span className="text-muted-foreground">Checking sender in Mailjet...</span>
+                    ) : mailjetSenderStatusError ? (
+                      <span className="font-medium text-orange-700">Could not check the sender with Mailjet.</span>
+                    ) : mailjetSenderStatus?.active ? (
+                      <span className="font-medium text-green-700">
+                        {mailjetSenderStatus.scope === 'domain' ? 'Verified domain' : 'Verified address'}
+                        {mailjetSenderStatus.matched_sender ? ` (${mailjetSenderStatus.matched_sender})` : ''}
+                      </span>
+                    ) : savedMailjetSenderEmail && appConfig?.mailjet_enabled ? (
+                      <span className="font-medium text-orange-700">Address or domain is not active in Mailjet.</span>
+                    ) : (
+                      <span className="text-muted-foreground">An active sender address or domain is required.</span>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveMailjetSender}
+                    disabled={setSetting.isPending || !mailjetSenderName.trim() || !mailjetSenderEmail.trim()}
+                  >
+                    Save Sender
+                  </Button>
+                </div>
+
+                <Label htmlFor="accountant-email">Accountant Email</Label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

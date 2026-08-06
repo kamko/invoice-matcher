@@ -18,7 +18,11 @@ from web.config import settings
 from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache, User, UserSetting
 from web.routers.gdrive import get_gdrive_service_for_user
-from web.services.email_service import DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE, send_accountant_summary
+from web.services.email_service import (
+    DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
+    get_mailjet_sender_status,
+    send_accountant_summary,
+)
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 ACCOUNTANT_FOLDER_NAMES = {
@@ -36,11 +40,11 @@ class CopyToAccountantRequest(BaseModel):
     send_summary_email: bool = False
 
 
-def _get_accountant_email(db: Session, user_id: int) -> str:
-    """Return and validate the configured accountant recipient."""
+def _get_email_setting(db: Session, user_id: int, key: str, label: str) -> str:
+    """Return and validate a configured user email setting."""
     setting = db.query(UserSetting).filter(
         UserSetting.user_id == user_id,
-        UserSetting.key == "accountant_email",
+        UserSetting.key == key,
     ).first()
     recipient = (setting.value or "").strip() if setting else ""
     _, parsed = parseaddr(recipient)
@@ -53,7 +57,7 @@ def _get_accountant_email(db: Session, user_id: int) -> str:
     ):
         raise HTTPException(
             status_code=400,
-            detail="Configure a valid accountant email address in Settings first",
+            detail=f"Configure a valid {label} email address in Settings first",
         )
     return recipient
 
@@ -397,16 +401,41 @@ def copy_to_accountant_folder(
     send_summary_email = payload.send_summary_email if payload else False
     if send_summary_email and not settings.mailjet_enabled:
         raise HTTPException(status_code=503, detail="Mailjet is not configured on the server")
-    accountant_email = _get_accountant_email(db, user.id) if send_summary_email else None
-    email_template_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == user.id,
-        UserSetting.key == "accountant_email_template",
-    ).first()
-    accountant_email_template = (
-        email_template_setting.value
-        if email_template_setting and email_template_setting.value
-        else DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
-    )
+    accountant_email = None
+    mailjet_sender_email = None
+    mailjet_sender_name = "Invoice Matcher"
+    accountant_email_template = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
+    if send_summary_email:
+        accountant_email = _get_email_setting(
+            db, user.id, "accountant_email", "accountant"
+        )
+        mailjet_sender_email = _get_email_setting(
+            db, user.id, "mailjet_sender_email", "sender"
+        )
+        try:
+            sender_status = get_mailjet_sender_status(mailjet_sender_email)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not sender_status["active"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Sender email or its domain is not active in Mailjet",
+            )
+        sender_name_setting = db.query(UserSetting).filter(
+            UserSetting.user_id == user.id,
+            UserSetting.key == "mailjet_sender_name",
+        ).first()
+        if sender_name_setting and sender_name_setting.value:
+            candidate_name = sender_name_setting.value.strip()
+            if candidate_name and "\n" not in candidate_name and "\r" not in candidate_name:
+                mailjet_sender_name = candidate_name[:255]
+
+        email_template_setting = db.query(UserSetting).filter(
+            UserSetting.user_id == user.id,
+            UserSetting.key == "accountant_email_template",
+        ).first()
+        if email_template_setting and email_template_setting.value:
+            accountant_email_template = email_template_setting.value
 
     # Parse month
     try:
@@ -516,6 +545,8 @@ def copy_to_accountant_folder(
             try:
                 message_id = send_accountant_summary(
                     accountant_email,
+                    mailjet_sender_email,
+                    mailjet_sender_name,
                     year,
                     mon,
                     successful_exports,
