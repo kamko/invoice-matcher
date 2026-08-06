@@ -6,10 +6,48 @@ from unittest.mock import Mock, patch
 
 from web.config import settings
 from web.services.email_service import (
+    DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
     build_accountant_email_body,
+    build_accountant_email_subject,
     get_mailjet_sender_status,
     send_accountant_summary,
 )
+
+
+class AccountantEmailSubjectTests(unittest.TestCase):
+    def test_includes_company_name_and_period(self):
+        self.assertEqual(
+            build_accountant_email_subject("Kamko Group", 2026, 7),
+            "Kamko Group - Doklady za obdobie 07/2026",
+        )
+
+    def test_rejects_missing_or_multiline_company_name(self):
+        for company_name in ("", "   ", "Kamko\nGroup", "x" * 256):
+            with self.subTest(company_name=company_name):
+                with self.assertRaises(ValueError):
+                    build_accountant_email_subject(company_name, 2026, 7)
+
+    def test_supports_editable_subject_template(self):
+        self.assertEqual(
+            build_accountant_email_subject(
+                "Kamko Group",
+                2026,
+                7,
+                "Doklady 07/2026: {company_name} ({period})",
+            ),
+            "Doklady 07/2026: Kamko Group (07/2026)",
+        )
+
+    def test_requires_company_and_period_tokens(self):
+        for template in ("Doklady {period}", "{company_name} - Doklady"):
+            with self.subTest(template=template):
+                with self.assertRaises(ValueError):
+                    build_accountant_email_subject(
+                        "Kamko Group",
+                        2026,
+                        7,
+                        template,
+                    )
 
 
 class AccountantEmailBodyTests(unittest.TestCase):
@@ -80,6 +118,8 @@ class SendAccountantSummaryTests(unittest.TestCase):
             "uctovnik@example.com",
             "doklady@example.com",
             "Moja firma",
+            "Kamko Group",
+            DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
             2026,
             7,
             [SimpleNamespace(filename="faktura.pdf", comment="Poznamka")],
@@ -89,6 +129,10 @@ class SendAccountantSummaryTests(unittest.TestCase):
 
         message = post.call_args.kwargs["json"]["Messages"][0]
         self.assertEqual(message_id, "message-123")
+        self.assertEqual(
+            message["Subject"],
+            "Kamko Group - Doklady za obdobie 07/2026",
+        )
         self.assertEqual(message["TextPart"], "Upraveny text pre tento export")
         self.assertEqual(message["Bcc"], [{"Email": "ja@example.com"}])
 
@@ -100,6 +144,8 @@ class SendAccountantSummaryTests(unittest.TestCase):
             "ja@example.com",
             "doklady@example.com",
             "Moja firma",
+            "Kamko Group",
+            DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
             2026,
             7,
             [],

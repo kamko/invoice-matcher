@@ -9,6 +9,39 @@ from web.config import settings
 from web.database.models import Invoice
 
 DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = "Posielam doklady za obdobie {period}.\n\n{comments}"
+DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE = (
+    "{company_name} - Doklady za obdobie {period}"
+)
+
+
+def build_accountant_email_subject(
+    company_name: str,
+    year: int,
+    month: int,
+    template: str = DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
+) -> str:
+    """Build the accountant subject from its required company and period tokens."""
+    normalized_name = company_name.strip()
+    if (
+        not normalized_name
+        or len(normalized_name) > 255
+        or "\n" in normalized_name
+        or "\r" in normalized_name
+    ):
+        raise ValueError("Company name is required for the email subject")
+    subject_template = template.strip() or DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE
+    if "{company_name}" not in subject_template or "{period}" not in subject_template:
+        raise ValueError("Subject template must contain {company_name} and {period}")
+
+    subject = (
+        subject_template
+        .replace("{company_name}", normalized_name)
+        .replace("{period}", f"{month:02d}/{year}")
+        .strip()
+    )
+    if not subject or len(subject) > 255 or "\n" in subject or "\r" in subject:
+        raise ValueError("Rendered email subject must be a single line up to 255 characters")
+    return subject
 
 
 def _get_mailjet_sender_records(resource: str) -> list[dict]:
@@ -129,6 +162,8 @@ def send_accountant_summary(
     recipient: str,
     sender_email: str,
     sender_name: str,
+    company_name: str,
+    subject_template: str,
     year: int,
     month: int,
     invoices: Iterable[Invoice],
@@ -146,7 +181,12 @@ def send_accountant_summary(
             "Name": sender_name,
         },
         "To": [{"Email": recipient}],
-        "Subject": f"Doklady za obdobie {month:02d}/{year}",
+        "Subject": build_accountant_email_subject(
+            company_name,
+            year,
+            month,
+            subject_template,
+        ),
         "TextPart": (
             body_override.strip()
             if body_override and body_override.strip()

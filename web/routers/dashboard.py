@@ -19,8 +19,10 @@ from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache, User, UserSetting
 from web.routers.gdrive import get_gdrive_service_for_user
 from web.services.email_service import (
+    DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
     DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
     build_accountant_email_body,
+    build_accountant_email_subject,
     get_mailjet_sender_status,
     send_accountant_summary,
 )
@@ -78,6 +80,41 @@ def _get_setting_value(
     if not setting or not setting.value:
         return default
     return setting.value.strip() or default
+
+
+def _get_company_name_setting(
+    db: Session,
+    user_id: int,
+    required: bool = False,
+) -> str:
+    """Return a safe company name for the accountant email subject."""
+    company_name = _get_setting_value(db, user_id, "company_name")
+    if company_name and (
+        len(company_name) > 255 or "\n" in company_name or "\r" in company_name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Configure a valid company name in Settings first",
+        )
+    if required and not company_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Configure a company name in Settings first",
+        )
+    return company_name
+
+
+def _build_accountant_subject_or_400(
+    company_name: str,
+    year: int,
+    month: int,
+    template: str,
+) -> str:
+    """Render a validated subject or return an actionable client error."""
+    try:
+        return build_accountant_email_subject(company_name, year, month, template)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _parse_year_month(year_month: str) -> tuple[int, int]:
@@ -454,9 +491,25 @@ def get_accountant_email_preview(
         "mailjet_sender_name",
         "Invoice Matcher",
     )
+    company_name = _get_company_name_setting(db, user.id)
+    subject_template = _get_setting_value(
+        db,
+        user.id,
+        "accountant_email_subject_template",
+        DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
+    )
 
     return {
-        "subject": f"Doklady za obdobie {mon:02d}/{year}",
+        "subject": (
+            _build_accountant_subject_or_400(
+                company_name,
+                year,
+                mon,
+                subject_template,
+            )
+            if company_name
+            else f"Doklady za obdobie {mon:02d}/{year}"
+        ),
         "sender_name": sender_name[:255],
         "sender_email": _get_setting_value(db, user.id, "mailjet_sender_email"),
         "to": _get_setting_value(db, user.id, "accountant_email"),
@@ -495,8 +548,17 @@ def copy_to_accountant_folder(
     accountant_email = None
     mailjet_sender_email = None
     mailjet_sender_name = "Invoice Matcher"
+    company_name = None
+    accountant_email_subject_template = DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE
     accountant_email_template = DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
     if send_summary_email:
+        company_name = _get_company_name_setting(db, user.id, required=True)
+        accountant_email_subject_template = _get_setting_value(
+            db,
+            user.id,
+            "accountant_email_subject_template",
+            DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
+        )
         accountant_email = _get_email_setting(
             db, user.id, "accountant_email", "accountant"
         )
@@ -529,6 +591,13 @@ def copy_to_accountant_folder(
             accountant_email_template = email_template_setting.value
 
     year, mon = _parse_year_month(year_month)
+    if send_summary_email:
+        _build_accountant_subject_or_400(
+            company_name,
+            year,
+            mon,
+            accountant_email_subject_template,
+        )
     invoices = _get_exportable_invoices(db, user.id, year, mon)
 
     if not invoices:
@@ -621,6 +690,8 @@ def copy_to_accountant_folder(
                     accountant_email,
                     mailjet_sender_email,
                     mailjet_sender_name,
+                    company_name,
+                    accountant_email_subject_template,
                     year,
                     mon,
                     successful_exports,
