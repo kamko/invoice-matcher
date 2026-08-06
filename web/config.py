@@ -39,8 +39,6 @@ class Settings(BaseSettings):
     # Mailjet transactional email
     mailjet_api_key: str = ""
     mailjet_secret_key: str = ""
-    mailjet_sender_email: str = ""
-    mailjet_sender_name: str = "Invoice Matcher"
 
     class Config:
         env_file = ".env"
@@ -68,7 +66,6 @@ class Settings(BaseSettings):
         return bool(
             self.mailjet_api_key
             and self.mailjet_secret_key
-            and self.mailjet_sender_email
         )
 
 

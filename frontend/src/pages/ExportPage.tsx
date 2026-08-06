@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, useAppConfig, showApiError, showSuccess } from '../api/client'
+import { useDashboard, useMonthStats, useCopyToGDrive, useSettings, useGDriveStatus, useFioVault, useAppConfig, useMailjetSenderStatus, showApiError, showSuccess } from '../api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Label } from '../components/ui/label'
@@ -25,7 +25,17 @@ export function ExportPage() {
   const accountantFolderId = settings?.accountant_folder_id
   const accountantFolderName = settings?.accountant_folder_name
   const accountantEmail = settings?.accountant_email
-  const summaryEmailReady = Boolean(accountantEmail && appConfig?.mailjet_enabled)
+  const mailjetSenderEmail = settings?.mailjet_sender_email
+  const { data: mailjetSenderStatus, isLoading: mailjetSenderStatusLoading, isError: mailjetSenderStatusError } = useMailjetSenderStatus(
+    mailjetSenderEmail || '',
+    Boolean(appConfig?.mailjet_enabled)
+  )
+  const summaryEmailReady = Boolean(
+    accountantEmail
+    && mailjetSenderEmail
+    && appConfig?.mailjet_enabled
+    && mailjetSenderStatus?.active
+  )
 
   const resolveFioToken = async () => {
     if (fioVault?.configured && fioVault.ciphertext && fioVault.nonce && fioVault.salt && fioVault.kdf && fioVault.kdf_params) {
@@ -173,6 +183,14 @@ export function ExportPage() {
                 <p className="text-sm text-orange-700">
                   {!accountantEmail
                     ? 'Add the accountant email in Settings before exporting.'
+                    : !mailjetSenderEmail
+                      ? 'Add the Mailjet sender email in Settings before exporting.'
+                    : mailjetSenderStatusLoading
+                      ? 'Checking the sender with Mailjet...'
+                    : mailjetSenderStatusError
+                      ? 'Could not verify the sender with Mailjet.'
+                    : appConfig?.mailjet_enabled && mailjetSenderStatus && !mailjetSenderStatus.active
+                      ? 'The sender address or domain is not active in Mailjet.'
                     : 'Configure Mailjet on the server before exporting.'}
                 </p>
               )}
