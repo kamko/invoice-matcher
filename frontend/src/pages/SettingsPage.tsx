@@ -637,7 +637,7 @@ export function SettingsPage() {
                     value={companyName}
                     onChange={(event) => setCompanyName(event.target.value)}
                     maxLength={255}
-                    placeholder="Kamko Group"
+                    placeholder="Your organization"
                   />
                   <Button
                     size="sm"

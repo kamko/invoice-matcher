@@ -17,12 +17,12 @@ from web.services.email_service import (
 class AccountantEmailSubjectTests(unittest.TestCase):
     def test_includes_company_name_and_period(self):
         self.assertEqual(
-            build_accountant_email_subject("Kamko Group", 2026, 7),
-            "Kamko Group - Doklady za obdobie 07/2026",
+            build_accountant_email_subject("Organization", 2026, 7),
+            "Organization - Doklady za obdobie 07/2026",
         )
 
     def test_rejects_missing_or_multiline_company_name(self):
-        for company_name in ("", "   ", "Kamko\nGroup", "x" * 256):
+        for company_name in ("", "   ", "Organization\nName", "x" * 256):
             with self.subTest(company_name=company_name):
                 with self.assertRaises(ValueError):
                     build_accountant_email_subject(company_name, 2026, 7)
@@ -30,12 +30,12 @@ class AccountantEmailSubjectTests(unittest.TestCase):
     def test_supports_editable_subject_template(self):
         self.assertEqual(
             build_accountant_email_subject(
-                "Kamko Group",
+                "Organization",
                 2026,
                 7,
                 "Doklady 07/2026: {company_name} ({period})",
             ),
-            "Doklady 07/2026: Kamko Group (07/2026)",
+            "Doklady 07/2026: Organization (07/2026)",
         )
 
     def test_requires_company_and_period_tokens(self):
@@ -43,7 +43,7 @@ class AccountantEmailSubjectTests(unittest.TestCase):
             with self.subTest(template=template):
                 with self.assertRaises(ValueError):
                     build_accountant_email_subject(
-                        "Kamko Group",
+                        "Organization",
                         2026,
                         7,
                         template,
@@ -118,7 +118,7 @@ class SendAccountantSummaryTests(unittest.TestCase):
             "uctovnik@example.com",
             "doklady@example.com",
             "Moja firma",
-            "Kamko Group",
+            "Organization",
             DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
             2026,
             7,
@@ -131,7 +131,7 @@ class SendAccountantSummaryTests(unittest.TestCase):
         self.assertEqual(message_id, "message-123")
         self.assertEqual(
             message["Subject"],
-            "Kamko Group - Doklady za obdobie 07/2026",
+            "Organization - Doklady za obdobie 07/2026",
         )
         self.assertEqual(message["TextPart"], "Upraveny text pre tento export")
         self.assertEqual(message["Bcc"], [{"Email": "ja@example.com"}])
@@ -144,7 +144,7 @@ class SendAccountantSummaryTests(unittest.TestCase):
             "ja@example.com",
             "doklady@example.com",
             "Moja firma",
-            "Kamko Group",
+            "Organization",
             DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
             2026,
             7,
@@ -180,17 +180,17 @@ class MailjetSenderStatusTests(unittest.TestCase):
     @patch("web.services.email_service.requests.get")
     def test_accepts_active_sender_address(self, get):
         get.return_value = self.response(
-            [{"Email": "info@kamko.group", "Status": "Active"}]
+            [{"Email": "sender@example.test", "Status": "Active"}]
         )
 
-        result = get_mailjet_sender_status("INFO@kamko.group")
+        result = get_mailjet_sender_status("SENDER@example.test")
 
         self.assertEqual(
             result,
             {
                 "active": True,
                 "scope": "address",
-                "matched_sender": "info@kamko.group",
+                "matched_sender": "sender@example.test",
             },
         )
         self.assertEqual(get.call_count, 1)
@@ -199,17 +199,17 @@ class MailjetSenderStatusTests(unittest.TestCase):
     def test_accepts_enabled_metasender_domain(self, get):
         get.side_effect = [
             self.response([]),
-            self.response([{"Email": "*@kamko.group", "IsEnabled": True}]),
+            self.response([{"Email": "*@example.test", "IsEnabled": True}]),
         ]
 
-        result = get_mailjet_sender_status("info@kamko.group")
+        result = get_mailjet_sender_status("sender@example.test")
 
         self.assertEqual(
             result,
             {
                 "active": True,
                 "scope": "domain",
-                "matched_sender": "*@kamko.group",
+                "matched_sender": "*@example.test",
             },
         )
         self.assertTrue(get.call_args_list[1].args[0].endswith("/metasender"))

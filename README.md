@@ -1,42 +1,58 @@
 # Invoice Matcher
 
-Internal tool for reconciling Fio Bank transactions with invoice PDFs stored in Google Drive.
+Private web app for collecting invoices, reconciling them with bank transactions, and handing a complete monthly package to an accountant.
 
-Current reality:
+## What It Does
 
-- Google sign-in is required to use the app
-- the same Google flow is used for Drive access
-- invoices are Drive-backed and cached locally in SQLite
-- Fio transactions are fetched on demand
-- matching is mostly deterministic: VS, IBAN + amount, then learned vendor aliases
-- unmatched items are reviewed manually in the UI
+- requires Google sign-in and keeps business data scoped to the signed-in user
+- connects to Google Drive through the same Google authorization flow
+- uploads PDFs or imports existing Drive month folders
+- extracts invoice metadata with deterministic parsing and optional LLM assistance
+- classifies documents as invoices, receipts, or other documents
+- fetches bank transactions on demand and supports deterministic, learned, suggested, and manual matching
+- stores optional accountant comments on individual documents
+- exports a month as a ZIP or copies documents into an accountant Drive folder
+- optionally adds the monthly bank statement to the accountant export
+- previews and sends a summary email through Mailjet, including document comments and a BCC to the signed-in user
+- supports editable organization name, email subject template, message template, sender identity, and accountant recipient in Settings
 
 ## Stack
 
-- FastAPI + SQLAlchemy + SQLite
-- React + Vite
-- Google OAuth + Google Drive
-- Fio Bank API
+- FastAPI, SQLAlchemy, and SQLite
+- React, TypeScript, and Vite
+- Google OAuth and Google Drive API
+- Fio API for transactions and monthly statements
 - optional OpenRouter-based PDF extraction
+- optional Mailjet transactional email
 
-## Required Config
+## Configuration
 
-Copy `.env.example` to `.env` and set at least:
+Copy `.env.example` to `.env`.
+
+Required for sign-in and Drive access:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_AUTH_REDIRECT_URI`
 - `SECRET_KEY`
+- `TRUSTED_HOSTS`
 
-Usually also needed:
+Access control is optional but strongly recommended for any deployed instance:
 
-- `ALLOWED_EMAIL_ADDRESSES` or `ALLOWED_EMAIL_DOMAINS`
+- `ALLOWED_EMAIL_ADDRESSES`
+- `ALLOWED_EMAIL_DOMAINS`
 
-Optional:
+If both allowlists are empty, any Google account that can complete sign-in is accepted.
 
-- `OPENROUTER_API_KEY`
-- `OPENROUTER_MODEL`
-- `MAILJET_API_KEY` and `MAILJET_SECRET_KEY` for accountant summary emails; configure a verified sender in the app Settings
+Optional integrations:
+
+- `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` enable LLM-assisted extraction
+- `MAILJET_API_KEY` and `MAILJET_SECRET_KEY` enable accountant summary emails
+- `ENCRYPTION_KEY` provides a dedicated server-side key for stored Google credentials; `SECRET_KEY` is used as the fallback
+
+Mailjet sender details, organization name, subject and message templates, recipient, and Drive folder IDs are configured per user in the app Settings. They are not environment variables.
+
+For HTTPS deployments, set `SESSION_COOKIE_SECURE=true` and use the public HTTPS callback URL in `GOOGLE_AUTH_REDIRECT_URI`.
 
 ## Run
 
@@ -46,18 +62,20 @@ Prebuilt image:
 docker compose up -d
 ```
 
-Local build:
+Local image build:
 
 ```bash
-docker compose -f docker-compose.build.yml up -d
+docker compose -f docker-compose.build.yml up -d --build
 ```
 
-Development:
+Development backend:
 
 ```bash
 uv sync
 uv run uvicorn web.main:app --reload --port 8000
 ```
+
+Development frontend:
 
 ```bash
 cd frontend
@@ -65,16 +83,61 @@ npm install
 npm run dev
 ```
 
-- app: [http://localhost:8000](http://localhost:8000)
-- frontend dev: [http://localhost:5173](http://localhost:5173)
+- production-style app: [http://localhost:8000](http://localhost:8000)
+- frontend development server: [http://localhost:5173](http://localhost:5173)
+- health check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
 
-## Notes
+## First-Run Setup
 
-- uploads go to Google Drive month folders named `YYYYMM`
+1. Sign in with Google and grant Drive access.
+2. In Settings, choose the invoice parent folder and accountant shared root folder.
+3. Save the Fio token in the encrypted vault if transaction fetching or monthly statement export is needed.
+4. If email handoff is enabled, configure the organization name, subject template, sender, recipient, and message template.
+5. Import existing Drive folders or upload invoice PDFs.
+
+The default email subject template is:
+
+```text
+{company_name} - Doklady za obdobie {period}
+```
+
+Both subject tokens are required. The message template supports `{period}` and `{comments}`. When no document has a comment, the standalone `{comments}` line and excess spacing are removed.
+
+## Data and Security
+
+- SQLite data and cached PDFs live in the persistent `/app/data` Docker volume.
+- Google credentials are encrypted server-side before storage.
+- The Fio token is encrypted in the browser with AES-GCM using a key derived with Argon2id; only the encrypted payload is stored by the server.
+- The Fio vault password can be remembered for the current tab or, when explicitly selected, on the current device.
+- Mutating API requests require a valid authenticated session and CSRF token.
+- OpenRouter and Mailjet API keys remain server-side environment variables.
+
+Back up the persistent data volume before replacing or migrating a deployment.
+
+## Workflow Notes
+
+- uploaded files go into Drive month folders named `YYYYMM`
 - uploaded files are renamed to `YYYY-MM-DD-NNN_payment-type_vendor-slug.pdf`
-- cash invoices are marked as `cash` and do not need a bank transaction match
-- export can download a ZIP or copy files into accountant Drive folders
-- production Docker image is `ghcr.io/kamko/invoice-matcher:${IMAGE_TAG}`
+- cash invoices use the `cash` status and do not require a bank transaction match
+- accountant exports route files by document type into `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, and `OSTATNE`
+- the optional monthly statement is stored in `OSTATNE`
+- email preview shows From, To, BCC, subject, and the editable per-send message body
+- editing the preview body does not overwrite the saved message template
+
+## Verification
+
+Backend tests:
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
+
+Frontend production build:
+
+```bash
+cd frontend
+npm run build
+```
 
 ## License
 
