@@ -1,5 +1,6 @@
 """Send the accountant handoff email through Mailjet."""
 
+import re
 from typing import Iterable
 
 import requests
@@ -110,12 +111,18 @@ def build_accountant_email_body(
             comment_lines.append(f"- {filename}: {normalized_comment}")
 
     body_template = template.strip() or DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE
-    return (
-        body_template
-        .replace("{period}", f"{month:02d}/{year}")
-        .replace("{comments}", "\n".join(comment_lines))
-        .strip()
+    rendered = body_template.replace("{period}", f"{month:02d}/{year}")
+    if comment_lines:
+        return rendered.replace("{comments}", "\n".join(comment_lines)).strip()
+
+    rendered = re.sub(
+        r"(?m)^[^\S\r\n]*\{comments\}[^\S\r\n]*(?:\r?\n|$)",
+        "",
+        rendered,
     )
+    rendered = rendered.replace("{comments}", "")
+    rendered = re.sub(r"(?:\r?\n[ \t]*){3,}", "\n\n", rendered)
+    return rendered.strip()
 
 
 def send_accountant_summary(

@@ -5,7 +5,47 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from web.config import settings
-from web.services.email_service import get_mailjet_sender_status, send_accountant_summary
+from web.services.email_service import (
+    build_accountant_email_body,
+    get_mailjet_sender_status,
+    send_accountant_summary,
+)
+
+
+class AccountantEmailBodyTests(unittest.TestCase):
+    def test_removes_empty_comments_line_without_extra_spacing(self):
+        template = (
+            "Pekny den,\n\n"
+            "Posielam doklady za obdobie {period}.\n\n"
+            "{comments}\n\n"
+            "S pozdravom,\n\n"
+            "kj."
+        )
+
+        result = build_accountant_email_body(2026, 7, [], template)
+
+        self.assertEqual(
+            result,
+            "Pekny den,\n\n"
+            "Posielam doklady za obdobie 07/2026.\n\n"
+            "S pozdravom,\n\n"
+            "kj.",
+        )
+        self.assertNotIn("{comments}", result)
+
+    def test_keeps_comment_block_when_comments_exist(self):
+        invoices = [
+            SimpleNamespace(filename="faktura.pdf", comment="Uhradene kartou")
+        ]
+
+        result = build_accountant_email_body(
+            2026,
+            7,
+            invoices,
+            "Doklady {period}.\n\n{comments}\n\nS pozdravom",
+        )
+
+        self.assertIn("Komentáre k dokladom:\n- faktura.pdf: Uhradene kartou", result)
 
 
 class SendAccountantSummaryTests(unittest.TestCase):
