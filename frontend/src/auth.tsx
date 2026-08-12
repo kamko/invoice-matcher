@@ -159,14 +159,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!auth.authenticated) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-6">
-        <div className="max-w-md w-full rounded-2xl border bg-card p-8 shadow-sm">
+      <div className="min-h-screen bg-background flex items-center justify-center px-4 sm:px-6">
+        <div className="max-w-md w-full rounded-2xl border bg-card p-5 shadow-sm sm:p-8">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <Lock className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">Invoice Matcher</h1>
+              <h1 className="text-xl font-bold sm:text-2xl">Invoice Matcher</h1>
               <p className="text-sm text-muted-foreground">Sign in to access the deployed service</p>
             </div>
           </div>

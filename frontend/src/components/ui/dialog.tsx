@@ -17,7 +17,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
         className="fixed inset-0 bg-black/80"
         onClick={() => onOpenChange(false)}
       />
-      <div className="fixed left-[50%] top-[50%] z-50 flex w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] justify-center">
+      <div className="fixed left-1/2 top-1/2 z-50 flex w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 justify-center">
         {children}
       </div>
     </div>
@@ -31,7 +31,7 @@ const DialogContent = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "relative grid max-h-[calc(100vh-2rem)] w-full min-w-0 max-w-lg gap-4 overflow-y-auto border bg-background p-6 shadow-lg duration-200 sm:rounded-lg",
+      "relative grid max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-lg gap-4 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg duration-200 sm:p-6",
       className
     )}
     {...props}
@@ -70,7 +70,7 @@ const DialogFooter = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
       className
     )}
     {...props}

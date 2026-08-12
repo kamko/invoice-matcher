@@ -22,6 +22,9 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
 
   const response = await fetch(`${API_BASE}${url}`, {
     ...options,
+    // API reads are stateful application data. Never let the browser serve a
+    // cached GET after a mutation; React Query owns the client-side cache.
+    cache: options?.cache ?? (method === 'GET' ? 'no-store' : undefined),
     credentials: 'same-origin',
     headers,
   })
@@ -582,10 +585,14 @@ export function useFetchTransactions() {
         '/transactions/fetch',
         { method: 'POST', body: JSON.stringify(data) }
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] })
-      queryClient.invalidateQueries({ queryKey: ['invoices'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['transactions'] }),
+        queryClient.invalidateQueries({ queryKey: ['invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['monthly-summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['month-stats'] }),
+      ])
     },
   })
 }
