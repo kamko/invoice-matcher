@@ -462,9 +462,9 @@ export function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Invoices</h1>
-        <Button onClick={() => setShowUploadModal(true)}>
+        <Button className="w-full sm:w-auto" onClick={() => setShowUploadModal(true)}>
           <Upload className="h-4 w-4 mr-2" />
           Upload Invoice
         </Button>
@@ -472,9 +472,9 @@ export function InvoicesPage() {
 
       {/* Filters */}
       <Card>
-        <CardContent className="pt-6">
-          <div className="flex gap-4 flex-wrap">
-            <div className="w-48">
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap">
+            <div className="w-full sm:w-48">
               <Label>Month</Label>
               <Select
                 value={month}
@@ -482,7 +482,7 @@ export function InvoicesPage() {
                 options={monthOptions}
               />
             </div>
-            <div className="w-48">
+            <div className="w-full sm:w-48">
               <Label>Status</Label>
               <Select
                 value={status}
@@ -490,7 +490,7 @@ export function InvoicesPage() {
                 options={statusOptions}
               />
             </div>
-            <div className="w-48">
+            <div className="w-full sm:w-48">
               <Label>Document Type</Label>
               <Select
                 value={documentType}
@@ -504,7 +504,7 @@ export function InvoicesPage() {
 
       {/* Stats */}
       {data && (
-        <div className="flex gap-4 text-sm">
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
           <span>Total: <strong>{data.total}</strong></span>
           <span>Unmatched: <strong className="text-orange-600">{data.unmatched}</strong></span>
           <span>Matched: <strong className="text-green-600">{data.matched}</strong></span>
@@ -980,7 +980,7 @@ export function InvoicesPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <div className="flex items-center gap-2">
                   <Label>Vendor</Label>
@@ -1036,7 +1036,7 @@ export function InvoicesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <div className="flex items-center gap-2">
                   <Label>Invoice Date</Label>
@@ -1078,7 +1078,7 @@ export function InvoicesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <div className="flex items-center gap-2">
                   <Label>Payment Type</Label>
@@ -1108,7 +1108,7 @@ export function InvoicesPage() {
             </div>
 
             {editPaymentType === 'wire' && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <div className="flex items-center gap-2">
                     <Label>Variable Symbol (VS)</Label>

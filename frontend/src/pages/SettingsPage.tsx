@@ -391,7 +391,7 @@ export function SettingsPage() {
             <CardTitle>Fio Bank API</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+            <div className="flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
               <span className="text-muted-foreground">Encrypted vault status</span>
               <span className={fioVault?.configured ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
                 {fioVault?.configured ? 'Configured' : 'Not configured'}
@@ -399,7 +399,7 @@ export function SettingsPage() {
             </div>
             <div className="space-y-2">
               <Label>API Token</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="relative flex-1">
                   <Input
                     type={showToken ? 'text' : 'password'}
@@ -417,12 +417,12 @@ export function SettingsPage() {
                     {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
-                <Button onClick={handleSaveFioToken} disabled={saveFioVault.isPending}>
+                <Button className="w-full sm:w-auto" onClick={handleSaveFioToken} disabled={saveFioVault.isPending}>
                   <Save className="h-4 w-4 mr-2" />
                   {fioVault?.configured ? 'Update' : 'Save'}
                 </Button>
                 {fioVault?.configured && (
-                  <Button variant="outline" onClick={handleDeleteFioToken} disabled={deleteFioVault.isPending}>
+                  <Button className="w-full sm:w-auto" variant="outline" onClick={handleDeleteFioToken} disabled={deleteFioVault.isPending}>
                     Delete
                   </Button>
                 )}
@@ -479,7 +479,7 @@ export function SettingsPage() {
             {/* Connection Status */}
             <div className="space-y-2">
               <Label>Connection Status</Label>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                 {gdriveStatus?.available ? (
                   gdriveStatus.authenticated ? (
                     <>
@@ -530,7 +530,7 @@ export function SettingsPage() {
 
             <div className="border-t pt-4 space-y-2">
               <Label>Invoice Parent Folder</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="flex-1 space-y-1">
                   <Input
                     value={invoiceFolderName || (invoiceFolder ? '(loading...)' : '')}
@@ -549,7 +549,7 @@ export function SettingsPage() {
                     className="font-mono text-xs h-7"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-col sm:gap-1">
                   {gdriveStatus?.authenticated && (
                     <Button variant="outline" size="sm" onClick={() => openFolderPicker('invoice')}>
                       <FolderOpen className="h-4 w-4 mr-1" />
@@ -566,6 +566,7 @@ export function SettingsPage() {
                 <div className="pt-2">
                   <Button
                     variant="outline"
+                    className="w-full sm:w-auto"
                     onClick={() => {
                       setSelectedImportFolders([])
                       setImportProgress(null)
@@ -585,7 +586,7 @@ export function SettingsPage() {
             {/* Accountant Export Root */}
             <div className="border-t pt-4 space-y-2">
               <Label>Accountant Shared Root Folder</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="flex-1 space-y-1">
                   <Input
                     value={accountantFolderName || (accountantFolder ? '(loading...)' : '')}
@@ -604,7 +605,7 @@ export function SettingsPage() {
                     className="font-mono text-xs h-7"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-col sm:gap-1">
                   {gdriveStatus?.authenticated && (
                     <Button variant="outline" size="sm" onClick={() => openFolderPicker('accountant')}>
                       <FolderOpen className="h-4 w-4 mr-1" />
@@ -815,9 +816,9 @@ export function SettingsPage() {
           <CardContent>
             <div className="space-y-2 text-sm">
               {settings && Object.entries(settings).map(([key, value]) => (
-                <div key={key} className="flex justify-between py-1 border-b last:border-0">
-                  <span className="font-medium">{key}</span>
-                  <span className="text-muted-foreground truncate max-w-xs">
+                <div key={key} className="flex flex-col gap-1 border-b py-1 last:border-0 sm:flex-row sm:justify-between">
+                  <span className="break-all font-medium">{key}</span>
+                  <span className="break-all text-muted-foreground sm:max-w-xs sm:truncate">
                     {key.includes('token') ? '***hidden***' : (value || '-')}
                   </span>
                 </div>

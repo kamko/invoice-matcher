@@ -149,14 +149,14 @@ export function RulesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Known Transaction Rules</h1>
           <p className="text-muted-foreground">
             Manage rules for automatically recognizing transactions (fees, recurring payments, etc.)
           </p>
         </div>
-        <Button onClick={openCreate}>
+        <Button className="w-full shrink-0 sm:w-auto" onClick={openCreate}>
           <Plus className="h-4 w-4 mr-2" />
           Add Rule
         </Button>
@@ -315,7 +315,7 @@ export function RulesPage() {
             )}
 
             {formData.rule_type === "pattern" && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Amount Min</Label>
                   <Input

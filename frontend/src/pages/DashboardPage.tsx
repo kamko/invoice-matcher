@@ -29,7 +29,7 @@ function formatDateForApi(date: Date) {
 }
 
 export function DashboardPage() {
-  const { data: dashboard, isLoading, refetch } = useDashboard()
+  const { data: dashboard, isLoading } = useDashboard()
   const { data: monthlySummary } = useMonthlySummary()
   const { data: fioVault } = useFioVault()
   const fetchTransactions = useFetchTransactions()
@@ -59,7 +59,6 @@ export function DashboardPage() {
         to_date: formatDateForApi(today),
       })
       showSuccess(`Fetched ${result.new} new transactions`)
-      refetch()
     } catch (error) {
       showApiError(error, 'Fetch transactions')
     } finally {
@@ -73,10 +72,11 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <Button
           variant="outline"
+          className="w-full sm:w-auto"
           onClick={handleFetchTransactions}
           disabled={isFetching}
         >

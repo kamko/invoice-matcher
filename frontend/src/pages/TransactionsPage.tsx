@@ -99,7 +99,6 @@ export function TransactionsPage() {
         to_date: formatDateForApi(today),
       })
       showSuccess(`Fetched ${result.new} new transactions`)
-      refetch()
     } catch (error) {
       showApiError(error, 'Fetch transactions')
     } finally {
@@ -269,10 +268,11 @@ export function TransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Transactions</h1>
         <Button
           variant="outline"
+          className="w-full sm:w-auto"
           onClick={handleFetchTransactions}
           disabled={isFetching}
         >
@@ -283,9 +283,9 @@ export function TransactionsPage() {
 
       {/* Filters */}
       <Card>
-        <CardContent className="pt-6">
-          <div className="flex gap-4">
-            <div className="w-48">
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="w-full sm:w-48">
               <Label>Month</Label>
               <Select
                 value={month}
@@ -293,7 +293,7 @@ export function TransactionsPage() {
                 options={monthOptions}
               />
             </div>
-            <div className="w-48">
+            <div className="w-full sm:w-48">
               <Label>Status</Label>
               <Select
                 value={status}
@@ -307,7 +307,7 @@ export function TransactionsPage() {
 
       {/* Stats */}
       {data && (
-        <div className="flex gap-4 text-sm">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:flex sm:flex-wrap">
           <span>Total: <strong>{data.total}</strong></span>
           <span>Unmatched: <strong className="text-orange-600">{data.unmatched}</strong></span>
           <span>Matched: <strong className="text-green-600">{data.matched}</strong></span>
@@ -459,7 +459,7 @@ export function TransactionsPage() {
               {suggestions?.suggestions.map((s: InvoiceSuggestion) => (
                 <div
                   key={s.invoice_id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted cursor-pointer"
+                  className="flex flex-col gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
                   onClick={() => handleMatch(s.invoice_id)}
                 >
                   <div>

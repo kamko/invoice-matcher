@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Route, Switch, Link, useLocation } from 'wouter'
 import { Toaster } from 'sonner'
+import { Menu, X } from 'lucide-react'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 import { InvoicesPage } from './pages/InvoicesPage'
@@ -11,15 +13,26 @@ import { Button } from './components/ui/button'
 import { cn } from './lib/utils'
 import { useSSE } from './hooks/useSSE'
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavLink({
+  href,
+  children,
+  mobile = false,
+  onNavigate,
+}: {
+  href: string
+  children: React.ReactNode
+  mobile?: boolean
+  onNavigate?: () => void
+}) {
   const [location] = useLocation()
   const isActive = location === href || (href !== '/' && location.startsWith(href))
 
   return (
-    <Link href={href}>
+    <Link href={href} onClick={onNavigate}>
       <span
         className={cn(
-          'px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer',
+          'rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer',
+          mobile && 'block w-full',
           isActive
             ? 'bg-primary text-primary-foreground'
             : 'text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -33,6 +46,7 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
 
 function AppContent() {
   const auth = useAuth()
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   // Connect to SSE for real-time updates
   useSSE()
@@ -47,34 +61,71 @@ function AppContent() {
           className: 'select-text',
         }}
       />
-      <header className="border-b">
-        <div className="container flex h-16 items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/">
-              <span className="text-xl font-bold cursor-pointer">Invoice Matcher</span>
-            </Link>
-            <nav className="flex items-center gap-2">
-              <NavLink href="/">Dashboard</NavLink>
-              <NavLink href="/transactions">Transactions</NavLink>
-              <NavLink href="/invoices">Invoices</NavLink>
-              <NavLink href="/export">Export</NavLink>
-              <NavLink href="/rules">Rules</NavLink>
-              <NavLink href="/settings">Settings</NavLink>
-            </nav>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="text-sm font-medium">{auth.fullName || auth.email}</div>
-              <div className="text-xs text-muted-foreground">{auth.email}</div>
+      <header className="border-b bg-background">
+        <div className="container py-3">
+          <div className="flex h-10 items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-5">
+              <Link href="/">
+                <span className="block truncate text-lg font-bold cursor-pointer sm:text-xl">Invoice Matcher</span>
+              </Link>
+              <nav className="hidden items-center gap-1 lg:flex" aria-label="Main navigation">
+                <NavLink href="/">Dashboard</NavLink>
+                <NavLink href="/transactions">Transactions</NavLink>
+                <NavLink href="/invoices">Invoices</NavLink>
+                <NavLink href="/export">Export</NavLink>
+                <NavLink href="/rules">Rules</NavLink>
+                <NavLink href="/settings">Settings</NavLink>
+              </nav>
             </div>
-            <Button variant="outline" size="sm" onClick={auth.logout}>
-              Sign Out
+            <div className="hidden items-center gap-3 lg:flex">
+              <div className="max-w-48 text-right">
+                <div className="text-sm font-medium">{auth.fullName || auth.email}</div>
+                <div className="truncate text-xs text-muted-foreground">{auth.email}</div>
+              </div>
+              <Button variant="outline" size="sm" onClick={auth.logout}>
+                Sign Out
+              </Button>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0 lg:hidden"
+              aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={mobileNavOpen}
+              aria-controls="mobile-navigation"
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
+          </div>
+
+          <div
+            id="mobile-navigation"
+            className={cn('border-t pt-3 lg:hidden', mobileNavOpen ? 'mt-3 block' : 'hidden')}
+          >
+            <nav className="grid grid-cols-2 gap-1" aria-label="Mobile navigation">
+              <NavLink href="/" mobile onNavigate={() => setMobileNavOpen(false)}>Dashboard</NavLink>
+              <NavLink href="/transactions" mobile onNavigate={() => setMobileNavOpen(false)}>Transactions</NavLink>
+              <NavLink href="/invoices" mobile onNavigate={() => setMobileNavOpen(false)}>Invoices</NavLink>
+              <NavLink href="/export" mobile onNavigate={() => setMobileNavOpen(false)}>Export</NavLink>
+              <NavLink href="/rules" mobile onNavigate={() => setMobileNavOpen(false)}>Rules</NavLink>
+              <NavLink href="/settings" mobile onNavigate={() => setMobileNavOpen(false)}>Settings</NavLink>
+            </nav>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t pt-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{auth.fullName || auth.email}</div>
+                <div className="truncate text-xs text-muted-foreground">{auth.email}</div>
+              </div>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={auth.logout}>
+                Sign Out
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="container py-6">
+      <main className="container py-4 sm:py-6">
         <Switch>
           <Route path="/" component={DashboardPage} />
           <Route path="/transactions" component={TransactionsPage} />
