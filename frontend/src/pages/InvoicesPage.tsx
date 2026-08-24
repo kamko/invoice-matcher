@@ -40,7 +40,40 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText } from 'lucide-react'
+import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive } from 'lucide-react'
+
+interface UploadDraft {
+  id: string
+  file: File
+  vendor: string
+  documentType: string
+  invoiceDate: string
+  amount: string
+  paymentType: string
+  comment: string
+  vehicleRegistration: string
+  isVehicleExpense: boolean
+  includeInExport: boolean
+  skipAnalyze: boolean
+  analyzing: boolean
+  error?: string
+}
+
+const createUploadDraft = (file: File): UploadDraft => ({
+  id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+  file,
+  vendor: '',
+  documentType: 'invoice',
+  invoiceDate: '',
+  amount: '',
+  paymentType: 'card',
+  comment: '',
+  vehicleRegistration: '',
+  isVehicleExpense: false,
+  includeInExport: true,
+  skipAnalyze: false,
+  analyzing: false,
+})
 
 export function InvoicesPage() {
   const search = useSearch()
@@ -57,15 +90,8 @@ export function InvoicesPage() {
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [uploadVendor, setUploadVendor] = useState('')
-  const [uploadDocumentType, setUploadDocumentType] = useState('invoice')
-  const [uploadDate, setUploadDate] = useState('')
-  const [uploadAmount, setUploadAmount] = useState('')
-  const [uploadPaymentType, setUploadPaymentType] = useState('card')
-  const [uploadComment, setUploadComment] = useState('')
-  const [uploadSkipAnalyze, setUploadSkipAnalyze] = useState(false)
-  const [uploadAnalyzing, setUploadAnalyzing] = useState(false)
+  const [uploadDrafts, setUploadDrafts] = useState<UploadDraft[]>([])
+  const [selectedUploadId, setSelectedUploadId] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [editFilename, setEditFilename] = useState('')
@@ -78,6 +104,9 @@ export function InvoicesPage() {
   const [editIban, setEditIban] = useState('')
   const [editCurrency, setEditCurrency] = useState('EUR')
   const [editComment, setEditComment] = useState('')
+  const [editVehicleRegistration, setEditVehicleRegistration] = useState('')
+  const [editIsVehicleExpense, setEditIsVehicleExpense] = useState(false)
+  const [editIncludeInExport, setEditIncludeInExport] = useState(true)
   // Track parsed/suggested values from reanalyze
   const [parsedValues, setParsedValues] = useState<{
     vendor?: string
@@ -105,6 +134,28 @@ export function InvoicesPage() {
   const { data: gdriveStatus } = useGDriveStatus()
   const { data: settings } = useSettings()
   const renameGDriveFile = useRenameGDriveFile()
+  const selectedUpload = uploadDrafts.find((draft) => draft.id === selectedUploadId) || null
+  const uploadAnalyzing = uploadDrafts.some((draft) => draft.analyzing)
+  const uploadVendor = selectedUpload?.vendor || ''
+  const uploadDocumentType = selectedUpload?.documentType || 'invoice'
+  const uploadDate = selectedUpload?.invoiceDate || ''
+  const uploadAmount = selectedUpload?.amount || ''
+  const uploadPaymentType = selectedUpload?.paymentType || 'card'
+  const uploadComment = selectedUpload?.comment || ''
+  const uploadSkipAnalyze = selectedUpload?.skipAnalyze || false
+  const setUploadVendor = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { vendor: value })
+  const setUploadDocumentType = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { documentType: value })
+  const setUploadDate = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { invoiceDate: value })
+  const setUploadAmount = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { amount: value })
+  const setUploadPaymentType = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { paymentType: value })
+  const setUploadComment = (value: string) => selectedUploadId && updateUploadDraft(selectedUploadId, { comment: value })
+  const setUploadSkipAnalyze = (value: boolean) => selectedUploadId && updateUploadDraft(selectedUploadId, { skipAnalyze: value })
+
+  const updateUploadDraft = (id: string, changes: Partial<UploadDraft>) => {
+    setUploadDrafts((drafts) => drafts.map((draft) => (
+      draft.id === id ? { ...draft, ...changes, error: changes.error } : draft
+    )))
+  }
 
   const handleMatch = async (transactionId: string) => {
     if (!selectedInvoice) return
@@ -146,7 +197,7 @@ export function InvoicesPage() {
   }
 
   const handleUpload = async () => {
-    if (!uploadFile) return
+    if (uploadDrafts.length === 0) return
 
     const folderId = settings?.invoice_parent_folder_id
     if (!folderId) {
@@ -159,62 +210,121 @@ export function InvoicesPage() {
       return
     }
 
+    const invalidDraft = uploadDrafts.find((draft) => (
+      !draft.invoiceDate
+      || (draft.isVehicleExpense && !/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(
+        draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()
+      ))
+    ))
+    if (invalidDraft) {
+      setSelectedUploadId(invalidDraft.id)
+      showApiError(
+        new Error(
+          !invalidDraft.invoiceDate
+            ? `Add a date for ${invalidDraft.file.name}`
+            : `Add a vehicle registration in the format KE885HH for ${invalidDraft.file.name}`
+        ),
+        'Upload'
+      )
+      return
+    }
+
     setIsUploading(true)
-    try {
-      await uploadInvoice.mutateAsync({
-        file: uploadFile,
-        vendor: uploadVendor || undefined,
-        documentType: uploadDocumentType || undefined,
-        invoiceDate: uploadDate || undefined,
-        paymentType: uploadPaymentType || 'card',  // Default to card if empty
-        amount: uploadAmount || undefined,
-        comment: uploadComment.trim() || undefined,
-        gdriveFolderId: folderId,
-        skipAnalyze: uploadSkipAnalyze,
-      })
-      showSuccess('Invoice uploaded to Google Drive')
+    const successfulIds: string[] = []
+    const failures: Array<{ id: string; message: string }> = []
+
+    for (const draft of uploadDrafts) {
+      try {
+        await uploadInvoice.mutateAsync({
+          file: draft.file,
+          vendor: draft.vendor || undefined,
+          documentType: draft.documentType || undefined,
+          invoiceDate: draft.invoiceDate || undefined,
+          paymentType: draft.paymentType || 'card',
+          amount: draft.amount || undefined,
+          comment: draft.comment.trim() || undefined,
+          vehicleRegistration: draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase() || undefined,
+          isVehicleExpense: draft.isVehicleExpense,
+          includeInExport: draft.includeInExport,
+          gdriveFolderId: folderId,
+          skipAnalyze: draft.skipAnalyze,
+        })
+        successfulIds.push(draft.id)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Upload failed'
+        failures.push({ id: draft.id, message })
+        updateUploadDraft(draft.id, { error: message })
+      }
+    }
+
+    setIsUploading(false)
+    if (failures.length === 0) {
+      showSuccess(`${successfulIds.length} ${successfulIds.length === 1 ? 'PDF uploaded' : 'PDFs uploaded'} to Google Drive`)
       setShowUploadModal(false)
       resetUploadForm()
-      refetch()
-    } catch (error) {
-      showApiError(error, 'Upload invoice')
-    } finally {
-      setIsUploading(false)
+    } else {
+      setUploadDrafts((drafts) => drafts.filter((draft) => !successfulIds.includes(draft.id)))
+      setSelectedUploadId(failures[0].id)
+      showApiError(
+        new Error(`${failures.length} ${failures.length === 1 ? 'file needs' : 'files need'} attention. ${failures[0].message}`),
+        'Upload'
+      )
     }
+    refetch()
   }
 
   const resetUploadForm = () => {
-    setUploadFile(null)
-    setUploadVendor('')
-    setUploadDocumentType('invoice')
-    setUploadDate('')
-    setUploadAmount('')
-    setUploadPaymentType('card')
-    setUploadComment('')
-    setUploadSkipAnalyze(false)
+    setUploadDrafts([])
+    setSelectedUploadId(null)
+  }
+
+  const removeUploadDraft = (id: string) => {
+    setUploadDrafts((drafts) => {
+      const remaining = drafts.filter((draft) => draft.id !== id)
+      if (selectedUploadId === id) {
+        setSelectedUploadId(remaining[0]?.id || null)
+      }
+      return remaining
+    })
   }
 
   // Generate preview of the final filename
-  const getPreviewFilename = () => {
-    if (!uploadDate) return null
-    const vendorSlug = uploadVendor
-      ? uploadVendor.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 30)
+  const getPreviewFilename = (draft: UploadDraft | null = selectedUpload) => {
+    if (!draft) return null
+    if (!draft.invoiceDate) return null
+    const vendorSlug = draft.vendor
+      ? draft.vendor.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 30)
       : 'unknown'
-    return `${uploadDate}-001_${uploadPaymentType || 'card'}_${vendorSlug}.pdf`
+    const plateSuffix = draft.vehicleRegistration
+      ? `_${draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()}`
+      : ''
+    return `${draft.invoiceDate}-001_${draft.paymentType || 'card'}_${vendorSlug}${plateSuffix}.pdf`
   }
 
-  const handleFileDrop = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      showApiError(new Error('Only PDF files allowed'), 'Upload')
+  const handleFileDrop = async (files: File[]) => {
+    const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'))
+    if (pdfFiles.length !== files.length) {
+      showApiError(new Error('Only PDF files are supported'), 'Upload')
+    }
+    if (pdfFiles.length === 0) {
       return
     }
-    setUploadFile(file)
-    // Auto-analyze after drop
-    await analyzeUploadedFile(file)
+
+    const existingKeys = new Set(uploadDrafts.map((draft) => (
+      `${draft.file.name}-${draft.file.size}-${draft.file.lastModified}`
+    )))
+    const newDrafts = pdfFiles
+      .filter((file) => !existingKeys.has(`${file.name}-${file.size}-${file.lastModified}`))
+      .map(createUploadDraft)
+
+    if (newDrafts.length === 0) return
+    setUploadDrafts((drafts) => [...drafts, ...newDrafts])
+    setSelectedUploadId((current) => current || newDrafts[0].id)
+    await Promise.all(newDrafts.map((draft) => analyzeUploadedFile(draft.id, draft.file)))
   }
 
-  const analyzeUploadedFile = async (file: File, showToast = false) => {
-    setUploadAnalyzing(true)
+  const analyzeUploadedFile = async (id: string, file: File, showToast = false) => {
+    updateUploadDraft(id, { analyzing: true, error: undefined })
     try {
       const formData = new FormData()
       formData.append('file', file)
@@ -230,11 +340,16 @@ export function InvoicesPage() {
         const extracted = data.extracted || {}
         const hasData = extracted.vendor || extracted.document_type || extracted.amount || extracted.invoice_date || extracted.payment_type
 
-        if (extracted.vendor) setUploadVendor(extracted.vendor)
-        if (extracted.document_type) setUploadDocumentType(extracted.document_type)
-        if (extracted.amount) setUploadAmount(extracted.amount)
-        if (extracted.invoice_date) setUploadDate(extracted.invoice_date)
-        if (extracted.payment_type) setUploadPaymentType(extracted.payment_type)
+        setUploadDrafts((drafts) => drafts.map((draft) => draft.id === id ? {
+          ...draft,
+          vendor: extracted.vendor || draft.vendor,
+          documentType: extracted.document_type || draft.documentType,
+          amount: extracted.amount || draft.amount,
+          invoiceDate: extracted.invoice_date || draft.invoiceDate,
+          paymentType: extracted.payment_type || draft.paymentType,
+          analyzing: false,
+          error: undefined,
+        } : draft))
 
         if (showToast) {
           if (hasData) {
@@ -252,11 +367,16 @@ export function InvoicesPage() {
         }
       }
     } catch (error) {
+      updateUploadDraft(id, {
+        error: error instanceof Error ? error.message : 'Analyze failed',
+      })
       if (showToast) {
         showApiError(error, 'Analyze PDF')
       }
     } finally {
-      setUploadAnalyzing(false)
+      setUploadDrafts((drafts) => drafts.map((draft) => (
+        draft.id === id ? { ...draft, analyzing: false } : draft
+      )))
     }
   }
 
@@ -313,7 +433,13 @@ export function InvoicesPage() {
   }
 
   // Generate filename from parts: YYYY-MM-DD-NNN_type_vendor.pdf
-  const generateFilename = (date: string, type: string, vendor: string, originalFilename: string) => {
+  const generateFilename = (
+    date: string,
+    type: string,
+    vendor: string,
+    vehicleRegistration: string,
+    originalFilename: string
+  ) => {
     // Extract the sequence number from original filename (e.g., "001" from "2026-03-07-001_card_obi.pdf")
     const match = originalFilename.match(/^\d{4}-\d{2}-\d{2}-(\d+)_/)
     const seq = match ? match[1] : '001'
@@ -325,12 +451,21 @@ export function InvoicesPage() {
       .replace(/\s+/g, '-')
       .substring(0, 30) || 'unknown'
 
-    return `${date}-${seq}_${type}_${vendorSlug}.pdf`
+    const plateSuffix = vehicleRegistration
+      ? `_${vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()}`
+      : ''
+    return `${date}-${seq}_${type}_${vendorSlug}${plateSuffix}.pdf`
   }
 
   // Compute preview filename based on current edit values
-  const previewFilename = selectedInvoice && editDate && editPaymentType && editVendor
-    ? generateFilename(editDate, editPaymentType, editVendor, selectedInvoice.filename || '')
+  const previewFilename = selectedInvoice && editDate && editPaymentType
+    ? generateFilename(
+        editDate,
+        editPaymentType,
+        editVendor,
+        editVehicleRegistration,
+        selectedInvoice.filename || ''
+      )
     : editFilename
 
   const openEditModal = (inv: Invoice) => {
@@ -346,12 +481,28 @@ export function InvoicesPage() {
     setEditVs(inv.vs || '')
     setEditIban(inv.iban || '')
     setEditComment(inv.comment || '')
+    setEditVehicleRegistration(inv.vehicle_registration || '')
+    setEditIsVehicleExpense(inv.is_vehicle_expense || false)
+    setEditIncludeInExport(inv.include_in_export)
     setParsedValues(null) // Reset parsed values
     setShowEditModal(true)
   }
 
   const handleEdit = async () => {
     if (!selectedInvoice) return
+
+    const normalizedRegistration = editVehicleRegistration.replace(/[\s-]/g, '').toUpperCase()
+    if (editIsVehicleExpense && !/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(normalizedRegistration)) {
+      showApiError(new Error('Use the vehicle registration format KE885HH'), 'Update invoice')
+      return
+    }
+    if (selectedInvoice.status === 'matched' && !editIncludeInExport) {
+      showApiError(
+        new Error('Unmatch this document before excluding it from accountant export'),
+        'Update invoice'
+      )
+      return
+    }
 
     // Use the generated preview filename
     const newFilename = previewFilename
@@ -389,6 +540,9 @@ export function InvoicesPage() {
         vs: editVs || undefined,
         iban: editIban || undefined,
         comment: editComment.trim(),
+        vehicle_registration: normalizedRegistration,
+        is_vehicle_expense: editIsVehicleExpense,
+        include_in_export: editIncludeInExport,
       })
       showSuccess(filenameChanged ? 'Invoice updated & renamed' : 'Invoice updated')
       setShowEditModal(false)
@@ -418,6 +572,8 @@ export function InvoicesPage() {
         return <Badge className="bg-blue-100 text-blue-800">Exported</Badge>
       case 'cash':
         return <Badge className="bg-purple-100 text-purple-800">Cash</Badge>
+      case 'reference':
+        return <Badge variant="outline">Internal only</Badge>
       default:
         return <Badge>{status}</Badge>
     }
@@ -445,6 +601,7 @@ export function InvoicesPage() {
     { value: 'matched', label: 'Matched' },
     { value: 'exported', label: 'Exported' },
     { value: 'cash', label: 'Cash' },
+    { value: 'reference', label: 'Internal only' },
   ]
 
   const documentTypeOptions = [
@@ -459,6 +616,12 @@ export function InvoicesPage() {
     { value: 'receipt', label: 'Receipt' },
     { value: 'other', label: 'Other' },
   ]
+
+  const knownVehicleRegistrations = Array.from(new Set(
+    (data?.invoices || [])
+      .map((invoice) => invoice.vehicle_registration)
+      .filter((value): value is string => Boolean(value))
+  )).sort()
 
   return (
     <div className="space-y-6">
@@ -558,7 +721,18 @@ export function InvoicesPage() {
                             <title>{inv.comment}</title>
                           </MessageSquareText>
                         )}
+                        {!inv.include_in_export && (
+                          <Archive className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Internal only">
+                            <title>Internal only, excluded from accountant export</title>
+                          </Archive>
+                        )}
                       </div>
+                      {inv.vehicle_registration && (
+                        <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <Car className="h-3.5 w-3.5" />
+                          {inv.vehicle_registration}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>{inv.vendor || '-'}</TableCell>
                     <TableCell>
@@ -580,7 +754,7 @@ export function InvoicesPage() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        {inv.status === 'unmatched' && (
+                        {inv.status === 'unmatched' && inv.include_in_export && (
                           <>
                             <Button
                               variant="outline"
@@ -620,6 +794,19 @@ export function InvoicesPage() {
                               <Check className="h-4 w-4" />
                             </Button>
                           </>
+                        )}
+                        {inv.status === 'reference' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedInvoice(inv)
+                              setShowDeleteModal(true)
+                            }}
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         )}
                       </div>
                     </TableCell>
@@ -726,9 +913,9 @@ export function InvoicesPage() {
         setShowUploadModal(open)
         if (!open) resetUploadForm()
       }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Upload Invoice</DialogTitle>
+            <DialogTitle>Upload PDFs</DialogTitle>
           </DialogHeader>
           <div className="min-w-0 space-y-4">
             {/* Drag & Drop Zone */}
@@ -736,9 +923,7 @@ export function InvoicesPage() {
               className={`min-w-0 overflow-hidden border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                 isDragging
                   ? 'border-blue-500 bg-blue-50'
-                  : uploadFile
-                    ? 'border-green-500 bg-green-50'
-                    : 'border-gray-300 hover:border-gray-400'
+                  : 'border-gray-300 hover:border-gray-400'
               }`}
               onDragOver={(e) => {
                 e.preventDefault()
@@ -748,59 +933,104 @@ export function InvoicesPage() {
               onDrop={(e) => {
                 e.preventDefault()
                 setIsDragging(false)
-                const file = e.dataTransfer.files[0]
-                if (file) handleFileDrop(file)
+                handleFileDrop(Array.from(e.dataTransfer.files))
               }}
             >
-              {uploadAnalyzing ? (
-                <div className="flex flex-col items-center gap-2">
-                  <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
-                  <span className="text-sm text-muted-foreground">Analyzing PDF...</span>
-                </div>
-              ) : uploadFile ? (
-                <div className="flex min-w-0 flex-col items-center gap-2">
-                  <Check className="h-8 w-8 shrink-0 text-green-600" />
-                  <span className="max-w-full break-words font-medium leading-tight">{uploadFile.name}</span>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => analyzeUploadedFile(uploadFile, true)}
-                      disabled={uploadAnalyzing}
-                    >
-                      <RefreshCw className={`h-4 w-4 mr-1 ${uploadAnalyzing ? 'animate-spin' : ''}`} />
-                      Re-analyze
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => resetUploadForm()}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex min-w-0 flex-col items-center gap-2">
-                  <Upload className="h-8 w-8 text-gray-400" />
-                  <span className="text-sm text-muted-foreground">
-                    Drag & drop PDF here, or
-                  </span>
-                  <label className="cursor-pointer">
-                    <span className="text-sm text-blue-600 hover:underline">browse files</span>
-                    <input
-                      type="file"
-                      accept=".pdf"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) handleFileDrop(file)
-                      }}
-                    />
-                  </label>
-                </div>
-              )}
+              <div className="flex min-w-0 flex-col items-center gap-2">
+                <Upload className="h-8 w-8 text-gray-400" />
+                <span className="text-sm text-muted-foreground">
+                  Drag and drop one or more PDFs here, or
+                </span>
+                <label className="cursor-pointer">
+                  <span className="text-sm text-blue-600 hover:underline">browse files</span>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || [])
+                      if (files.length) handleFileDrop(files)
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+              </div>
             </div>
+
+            {uploadDrafts.length > 0 && (
+              <div className="overflow-hidden rounded-md border">
+                {uploadDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedUploadId(draft.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setSelectedUploadId(draft.id)
+                      }
+                    }}
+                    className={`flex w-full items-center gap-3 border-b px-3 py-2.5 text-left last:border-b-0 ${
+                      selectedUploadId === draft.id ? 'bg-muted' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    {draft.analyzing ? (
+                      <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-blue-600" />
+                    ) : draft.error ? (
+                      <FileText className="h-4 w-4 shrink-0 text-red-600" />
+                    ) : (
+                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{draft.file.name}</span>
+                    {draft.vehicleRegistration && (
+                      <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
+                        {draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()}
+                      </span>
+                    )}
+                    <Badge variant={draft.includeInExport ? 'default' : 'outline'}>
+                      {draft.includeInExport ? 'Export' : 'Internal'}
+                    </Badge>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${draft.file.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeUploadDraft(draft.id)
+                      }}
+                      className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {selectedUpload?.error && (
+              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {selectedUpload.error}
+              </p>
+            )}
+
+            {selectedUpload && (
+              <div className="flex items-center justify-between gap-3 border-b pb-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">Document details</p>
+                  <p className="truncate text-xs text-muted-foreground">{selectedUpload.file.name}</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => analyzeUploadedFile(selectedUpload.id, selectedUpload.file, true)}
+                  disabled={selectedUpload.analyzing}
+                >
+                  <RefreshCw className={`mr-1 h-4 w-4 ${selectedUpload.analyzing ? 'animate-spin' : ''}`} />
+                  Re-analyze
+                </Button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="min-w-0">
@@ -857,6 +1087,70 @@ export function InvoicesPage() {
               <div />
             </div>
 
+            {selectedUpload && (
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedUpload.includeInExport}
+                    onChange={(event) => updateUploadDraft(selectedUpload.id, {
+                      includeInExport: event.target.checked,
+                    })}
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">Include in accountant export</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Turn off for internal statements and supporting files.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedUpload.isVehicleExpense}
+                    onChange={(event) => updateUploadDraft(selectedUpload.id, {
+                      isVehicleExpense: event.target.checked,
+                    })}
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span>
+                    <span className="flex items-center gap-1 text-sm font-medium">
+                      <Car className="h-3.5 w-3.5" /> Vehicle expense
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      A vehicle registration is required.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {selectedUpload?.isVehicleExpense && (
+              <div className="max-w-sm">
+                <Label htmlFor="upload-vehicle-registration">Vehicle registration (ŠPZ)</Label>
+                <Input
+                  id="upload-vehicle-registration"
+                  list="known-vehicle-registrations"
+                  value={selectedUpload.vehicleRegistration}
+                  onChange={(event) => updateUploadDraft(selectedUpload.id, {
+                    vehicleRegistration: event.target.value.toUpperCase(),
+                  })}
+                  placeholder="KE885HH"
+                  maxLength={9}
+                  autoComplete="off"
+                />
+                <datalist id="known-vehicle-registrations">
+                  {knownVehicleRegistrations.map((registration) => (
+                    <option key={registration} value={registration} />
+                  ))}
+                </datalist>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Saved without spaces or dashes and added to the PDF filename.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label htmlFor="upload-comment">Accountant Comment</Label>
@@ -902,14 +1196,14 @@ export function InvoicesPage() {
             <Button variant="outline" onClick={() => setShowUploadModal(false)} disabled={isUploading}>
               Cancel
             </Button>
-            <Button onClick={handleUpload} disabled={!uploadFile || uploadAnalyzing || isUploading}>
+            <Button onClick={handleUpload} disabled={uploadDrafts.length === 0 || uploadAnalyzing || isUploading}>
               {isUploading ? (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   Uploading...
                 </>
               ) : (
-                'Upload'
+                `Upload ${uploadDrafts.length || ''} ${uploadDrafts.length === 1 ? 'PDF' : 'PDFs'}`
               )}
             </Button>
           </DialogFooter>
@@ -1149,6 +1443,59 @@ export function InvoicesPage() {
                     className={hasSuggestion('iban', editIban) ? 'border-blue-300' : ''}
                   />
                 </div>
+              </div>
+            )}
+
+            <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={editIncludeInExport}
+                  onChange={(event) => setEditIncludeInExport(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  <span className="block text-sm font-medium">Include in accountant export</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Internal files stay in this tool and Drive only.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={editIsVehicleExpense}
+                  onChange={(event) => setEditIsVehicleExpense(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  <span className="flex items-center gap-1 text-sm font-medium">
+                    <Car className="h-3.5 w-3.5" /> Vehicle expense
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    Adds the registration to the PDF filename.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {editIsVehicleExpense && (
+              <div className="max-w-sm">
+                <Label htmlFor="edit-vehicle-registration">Vehicle registration (ŠPZ)</Label>
+                <Input
+                  id="edit-vehicle-registration"
+                  list="known-vehicle-registrations-edit"
+                  value={editVehicleRegistration}
+                  onChange={(event) => setEditVehicleRegistration(event.target.value.toUpperCase())}
+                  placeholder="KE885HH"
+                  maxLength={9}
+                  autoComplete="off"
+                />
+                <datalist id="known-vehicle-registrations-edit">
+                  {knownVehicleRegistrations.map((registration) => (
+                    <option key={registration} value={registration} />
+                  ))}
+                </datalist>
               </div>
             )}
 

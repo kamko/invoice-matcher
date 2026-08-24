@@ -103,8 +103,11 @@ export interface Invoice {
   vs?: string
   iban?: string
   comment?: string
+  vehicle_registration?: string
+  is_vehicle_expense: boolean
+  include_in_export: boolean
   is_credit_note: boolean
-  status: 'unmatched' | 'matched' | 'cash' | 'exported'
+  status: 'unmatched' | 'matched' | 'cash' | 'exported' | 'reference'
   transaction_id?: string
   created_at: string
   invoice_month?: string
@@ -385,6 +388,9 @@ export function useUploadInvoice() {
       paymentType,
       amount,
       comment,
+      vehicleRegistration,
+      isVehicleExpense,
+      includeInExport,
       gdriveFolderId,
       skipAnalyze,
     }: {
@@ -395,6 +401,9 @@ export function useUploadInvoice() {
       paymentType?: string
       amount?: string
       comment?: string
+      vehicleRegistration?: string
+      isVehicleExpense?: boolean
+      includeInExport?: boolean
       gdriveFolderId: string  // Required - parent folder ID
       skipAnalyze?: boolean
     }): Promise<Invoice> => {
@@ -407,6 +416,9 @@ export function useUploadInvoice() {
       if (paymentType) formData.append('payment_type', paymentType)
       if (amount) formData.append('amount', amount)
       if (comment) formData.append('comment', comment)
+      if (vehicleRegistration) formData.append('vehicle_registration', vehicleRegistration)
+      formData.append('is_vehicle_expense', isVehicleExpense ? 'true' : 'false')
+      formData.append('include_in_export', includeInExport === false ? 'false' : 'true')
       if (skipAnalyze) formData.append('skip_analyze', 'true')
 
       const response = await authFetch('/invoices/upload', {
@@ -469,6 +481,9 @@ export function useUpdateInvoice() {
       vs?: string
       iban?: string
       comment?: string
+      vehicle_registration?: string
+      is_vehicle_expense?: boolean
+      include_in_export?: boolean
     }) =>
       fetchJson<Invoice>(`/invoices/${invoiceId}`, {
         method: 'PATCH',

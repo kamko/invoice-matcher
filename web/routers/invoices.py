@@ -1,5 +1,7 @@
 """Router for invoice endpoints."""
 
+import hashlib
+import re
 import tempfile
 from datetime import datetime
 from decimal import Decimal
@@ -29,6 +31,7 @@ from parsers.pdf_parser import parse_uploaded_pdf
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 VALID_DOCUMENT_TYPES = {"invoice", "receipt", "other"}
+VEHICLE_REGISTRATION_PATTERN = re.compile(r"^[A-Z]{2}\d{3}[A-Z]{2}$")
 
 
 def _normalize_document_type(value: Optional[str]) -> str:
@@ -40,6 +43,25 @@ def _normalize_document_type(value: Optional[str]) -> str:
     if normalized in VALID_DOCUMENT_TYPES:
         return normalized
     return "invoice"
+
+
+def _normalize_vehicle_registration(value: Optional[str]) -> Optional[str]:
+    """Return a compact uppercase vehicle registration or reject invalid input."""
+    if not value or not value.strip():
+        return None
+    normalized = re.sub(r"[\s-]+", "", value).upper()
+    if not VEHICLE_REGISTRATION_PATTERN.fullmatch(normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle registration must use the format KE885HH",
+        )
+    return normalized
+
+
+def _vehicle_registration_from_filename(filename: str) -> Optional[str]:
+    """Extract an accountant-compatible registration from a filename."""
+    match = re.search(r"(?<![A-Z0-9])([A-Z]{2}\d{3}[A-Z]{2})(?![A-Z0-9])", filename.upper())
+    return match.group(1) if match else None
 
 
 def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
@@ -62,6 +84,9 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         vs=invoice.vs,
         iban=invoice.iban,
         comment=invoice.comment,
+        vehicle_registration=invoice.vehicle_registration,
+        is_vehicle_expense=invoice.is_vehicle_expense,
+        include_in_export=invoice.include_in_export,
         is_credit_note=invoice.is_credit_note,
         status=invoice.status,
         transaction_id=invoice.transaction_id,
@@ -178,6 +203,9 @@ async def upload_invoice(
     amount: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     comment: Optional[str] = Form(None, max_length=2000),
+    vehicle_registration: Optional[str] = Form(None, max_length=16),
+    is_vehicle_expense: bool = Form(False),
+    include_in_export: bool = Form(True),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
     skip_analyze: Optional[bool] = Form(False),  # Skip PDF analysis, use provided values
     user: User = Depends(get_current_user),
@@ -194,6 +222,23 @@ async def upload_invoice(
 
     # Save to temp file for parsing (use original filename for date extraction)
     content = await file.read()
+    content_sha256 = hashlib.sha256(content).hexdigest()
+    duplicate = db.query(Invoice).filter(
+        Invoice.user_id == user.id,
+        Invoice.content_sha256 == content_sha256,
+    ).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This PDF is already stored as {duplicate.filename}",
+        )
+
+    final_vehicle_registration = _normalize_vehicle_registration(vehicle_registration)
+    if is_vehicle_expense and not final_vehicle_registration:
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle registration is required for a vehicle expense",
+        )
 
     # Create temp file with original filename to enable filename-based date parsing
     import os
@@ -256,7 +301,8 @@ async def upload_invoice(
             vendor_slug = re.sub(r'[^\w\s-]', '', final_vendor.lower())
             vendor_slug = re.sub(r'[\s]+', '-', vendor_slug)[:30]
 
-        proper_filename = f"{date_str}-{next_seq:03d}_{final_type}_{vendor_slug}.pdf"
+        plate_suffix = f"_{final_vehicle_registration}" if final_vehicle_registration else ""
+        proper_filename = f"{date_str}-{next_seq:03d}_{final_type}_{vendor_slug}{plate_suffix}.pdf"
 
         # Upload to GDrive (to the month subfolder) with proper filename
         try:
@@ -291,8 +337,12 @@ async def upload_invoice(
             vs=parsed.get('vs'),
             iban=parsed.get('iban'),
             comment=comment.strip() if comment and comment.strip() else None,
+            vehicle_registration=final_vehicle_registration,
+            is_vehicle_expense=is_vehicle_expense,
+            content_sha256=content_sha256,
+            include_in_export=include_in_export,
             is_credit_note=parsed.get('is_credit_note', False),
-            status='unmatched',
+            status='unmatched' if include_in_export else 'reference',
             created_at=datetime.utcnow(),
         )
 
@@ -372,6 +422,15 @@ async def import_gdrive(
         # Download and parse
         try:
             content = service.download_file(gdrive_id)
+            content_sha256 = hashlib.sha256(content).hexdigest()
+
+            duplicate = db.query(Invoice).filter(
+                Invoice.user_id == user.id,
+                Invoice.content_sha256 == content_sha256,
+            ).first()
+            if duplicate:
+                skipped += 1
+                continue
 
             # Cache the PDF
             cache_entry = PDFCache(
@@ -406,6 +465,7 @@ async def import_gdrive(
                     os.rmdir(temp_dir)
 
             # Create invoice
+            vehicle_registration = _vehicle_registration_from_filename(filename)
             invoice = Invoice(
                 user_id=user.id,
                 gdrive_file_id=gdrive_id,
@@ -419,6 +479,10 @@ async def import_gdrive(
                 payment_type=parsed.get('payment_type', 'card'),
                 vs=parsed.get('vs'),
                 iban=parsed.get('iban'),
+                vehicle_registration=vehicle_registration,
+                is_vehicle_expense=bool(vehicle_registration),
+                content_sha256=content_sha256,
+                include_in_export=True,
                 is_credit_note=parsed.get('is_credit_note', False),
                 status='unmatched',
                 created_at=datetime.utcnow(),
@@ -469,6 +533,34 @@ def update_invoice(
     update_data = update.model_dump(exclude_unset=True)
     if "document_type" in update_data:
         update_data["document_type"] = _normalize_document_type(update_data["document_type"])
+    if "vehicle_registration" in update_data:
+        update_data["vehicle_registration"] = _normalize_vehicle_registration(
+            update_data["vehicle_registration"]
+        )
+
+    next_is_vehicle_expense = update_data.get(
+        "is_vehicle_expense", invoice.is_vehicle_expense
+    )
+    next_vehicle_registration = update_data.get(
+        "vehicle_registration", invoice.vehicle_registration
+    )
+    if next_is_vehicle_expense and not next_vehicle_registration:
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle registration is required for a vehicle expense",
+        )
+
+    if update_data.get("include_in_export") is False and invoice.transaction_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Unmatch this document before excluding it from accountant export",
+        )
+
+    if "include_in_export" in update_data:
+        if update_data["include_in_export"] and not invoice.include_in_export:
+            update_data["status"] = "unmatched"
+        elif not update_data["include_in_export"]:
+            update_data["status"] = "reference"
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
@@ -537,6 +629,18 @@ def match_invoice(
     db: Session = Depends(get_db)
 ):
     """Match an invoice to a transaction."""
+    invoice_record = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.user_id == user.id,
+    ).first()
+    if not invoice_record:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not invoice_record.include_in_export:
+        raise HTTPException(
+            status_code=400,
+            detail="Internal reference files cannot be matched to bank transactions",
+        )
+
     matching = MatchingService(db, user.id)
 
     try:

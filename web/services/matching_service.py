@@ -181,7 +181,8 @@ class MatchingService:
         candidates = []
 
         for invoice in self._invoice_query().filter(
-            Invoice.status == 'unmatched'
+            Invoice.status == 'unmatched',
+            Invoice.include_in_export.is_(True),
         ).all():
             # Check type compatibility
             if not self._is_compatible(invoice, transaction):
@@ -233,6 +234,8 @@ class MatchingService:
             raise ValueError(f"Invoice {invoice_id} not found")
         if not transaction:
             raise ValueError(f"Transaction {transaction_id} not found")
+        if not invoice.include_in_export:
+            raise ValueError("Internal reference files cannot be matched")
 
         if invoice.status == 'matched':
             raise ValueError("Invoice already matched")
@@ -288,7 +291,8 @@ class MatchingService:
         results = {'tier1_vs': 0, 'tier1_iban': 0, 'tier2_alias': 0, 'cash': 0}
 
         unmatched_invoices = self._invoice_query().filter(
-            Invoice.status == 'unmatched'
+            Invoice.status == 'unmatched',
+            Invoice.include_in_export.is_(True),
         ).all()
 
         for invoice in unmatched_invoices:
