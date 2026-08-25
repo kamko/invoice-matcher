@@ -14,6 +14,7 @@ from .models import (
     UserSetting,
     UserSecret,
     GoogleDriveConnection,
+    Vehicle,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "UserSetting",
     "UserSecret",
     "GoogleDriveConnection",
+    "Vehicle",
 ]

@@ -9,7 +9,7 @@ Private web app for collecting invoices, reconciling them with bank transactions
 - uploads PDFs or imports existing Drive month folders
 - supports selecting multiple PDFs at once and choosing which files belong in the accountant export
 - blocks byte-identical duplicate PDFs before they are uploaded to Drive
-- stores vehicle-expense registrations in the compact `KE885HH` format and includes them in filenames
+- manages a per-user vehicle list in Settings and includes the selected vehicle registration in expense filenames
 - extracts invoice metadata with deterministic parsing and optional LLM assistance
 - classifies documents as invoices, receipts, or other documents
 - fetches bank transactions on demand and supports deterministic, learned, suggested, and manual matching
@@ -94,9 +94,10 @@ npm run dev
 
 1. Sign in with Google and grant Drive access.
 2. In Settings, choose the invoice parent folder and accountant shared root folder.
-3. Save the Fio token in the encrypted vault if transaction fetching or monthly statement export is needed.
-4. If email handoff is enabled, configure the organization name, subject template, sender, recipient, and message template.
-5. Import existing Drive folders or upload invoice PDFs.
+3. Add the vehicles used for fuel and other car expenses.
+4. Save the Fio token in the encrypted vault if transaction fetching or monthly statement export is needed.
+5. If email handoff is enabled, configure the organization name, subject template, sender, recipient, and message template.
+6. Import existing Drive folders or upload invoice PDFs.
 
 The default email subject template is:
 
@@ -121,7 +122,9 @@ Back up the persistent data volume before replacing or migrating a deployment.
 
 - uploaded files go into Drive month folders named `YYYYMM`
 - uploaded files are renamed to `YYYY-MM-DD-NNN_payment-type_vendor-slug.pdf`
-- vehicle-expense filenames add the registration before `.pdf`
+- vehicle expenses use the active vehicle dropdown; with one active vehicle it is selected automatically
+- vehicle-expense filenames add the selected registration before `.pdf`
+- changing a vehicle in Settings affects future uploads while existing documents keep their stored registration
 - files excluded from accountant export remain available as internal references and are not bank-matched
 - cash invoices use the `cash` status and do not require a bank transaction match
 - accountant exports route files by document type into `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, and `OSTATNE`

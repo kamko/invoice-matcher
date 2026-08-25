@@ -104,6 +104,24 @@ class GoogleDriveConnection(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Vehicle(Base):
+    """A user-managed vehicle available for expense classification."""
+
+    __tablename__ = "vehicles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    registration = Column(String(16), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'registration', name='uq_vehicle_user_registration'),
+    )
+
+
 class Invoice(Base):
     """Invoices uploaded from GDrive or manually."""
 
@@ -123,6 +141,7 @@ class Invoice(Base):
     vs = Column(String(50), nullable=True)  # Variable symbol (for wire)
     iban = Column(String(50), nullable=True)  # IBAN (for wire)
     comment = Column(Text, nullable=True)  # Context included in the accountant summary email
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)
     vehicle_registration = Column(String(16), nullable=True)
     is_vehicle_expense = Column(Boolean, default=False, nullable=False)
     content_sha256 = Column(String(64), nullable=True, index=True)

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from web.auth import get_current_user
 from web.database import get_db
-from web.database.models import Invoice, Transaction, PDFCache, User
+from web.database.models import Invoice, Transaction, PDFCache, User, Vehicle
 from web.routers.gdrive import get_gdrive_service_for_user
 from web.schemas.invoices import (
     InvoiceResponse,
@@ -26,12 +26,12 @@ from web.schemas.invoices import (
     ImportGDriveRequest,
 )
 from web.services.matching_service import MatchingService
+from web.services.vehicle_service import normalize_vehicle_registration
 from web.routers.sse import send_progress, send_info, send_error, send_success
 from parsers.pdf_parser import parse_uploaded_pdf
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 VALID_DOCUMENT_TYPES = {"invoice", "receipt", "other"}
-VEHICLE_REGISTRATION_PATTERN = re.compile(r"^[A-Z]{2}\d{3}[A-Z]{2}$")
 
 
 def _normalize_document_type(value: Optional[str]) -> str:
@@ -43,19 +43,6 @@ def _normalize_document_type(value: Optional[str]) -> str:
     if normalized in VALID_DOCUMENT_TYPES:
         return normalized
     return "invoice"
-
-
-def _normalize_vehicle_registration(value: Optional[str]) -> Optional[str]:
-    """Return a compact uppercase vehicle registration or reject invalid input."""
-    if not value or not value.strip():
-        return None
-    normalized = re.sub(r"[\s-]+", "", value).upper()
-    if not VEHICLE_REGISTRATION_PATTERN.fullmatch(normalized):
-        raise HTTPException(
-            status_code=400,
-            detail="Vehicle registration must use the format KE885HH",
-        )
-    return normalized
 
 
 def _vehicle_registration_from_filename(filename: str) -> Optional[str]:
@@ -84,6 +71,7 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         vs=invoice.vs,
         iban=invoice.iban,
         comment=invoice.comment,
+        vehicle_id=invoice.vehicle_id,
         vehicle_registration=invoice.vehicle_registration,
         is_vehicle_expense=invoice.is_vehicle_expense,
         include_in_export=invoice.include_in_export,
@@ -203,6 +191,7 @@ async def upload_invoice(
     amount: Optional[str] = Form(None),
     currency: Optional[str] = Form(None),
     comment: Optional[str] = Form(None, max_length=2000),
+    vehicle_id: Optional[int] = Form(None),
     vehicle_registration: Optional[str] = Form(None, max_length=16),
     is_vehicle_expense: bool = Form(False),
     include_in_export: bool = Form(True),
@@ -233,7 +222,27 @@ async def upload_invoice(
             detail=f"This PDF is already stored as {duplicate.filename}",
         )
 
-    final_vehicle_registration = _normalize_vehicle_registration(vehicle_registration)
+    selected_vehicle = None
+    if vehicle_id is not None:
+        selected_vehicle = db.query(Vehicle).filter(
+            Vehicle.id == vehicle_id,
+            Vehicle.user_id == user.id,
+            Vehicle.is_active.is_(True),
+        ).first()
+        if not selected_vehicle:
+            raise HTTPException(status_code=400, detail="Select an active vehicle")
+
+    try:
+        final_vehicle_registration = (
+            selected_vehicle.registration
+            if selected_vehicle
+            else normalize_vehicle_registration(vehicle_registration)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not is_vehicle_expense:
+        selected_vehicle = None
+        final_vehicle_registration = None
     if is_vehicle_expense and not final_vehicle_registration:
         raise HTTPException(
             status_code=400,
@@ -337,6 +346,7 @@ async def upload_invoice(
             vs=parsed.get('vs'),
             iban=parsed.get('iban'),
             comment=comment.strip() if comment and comment.strip() else None,
+            vehicle_id=selected_vehicle.id if selected_vehicle else None,
             vehicle_registration=final_vehicle_registration,
             is_vehicle_expense=is_vehicle_expense,
             content_sha256=content_sha256,
@@ -466,6 +476,21 @@ async def import_gdrive(
 
             # Create invoice
             vehicle_registration = _vehicle_registration_from_filename(filename)
+            vehicle = None
+            if vehicle_registration:
+                vehicle = db.query(Vehicle).filter(
+                    Vehicle.user_id == user.id,
+                    Vehicle.registration == vehicle_registration,
+                ).first()
+                if not vehicle:
+                    vehicle = Vehicle(
+                        user_id=user.id,
+                        name=vehicle_registration,
+                        registration=vehicle_registration,
+                        is_active=True,
+                    )
+                    db.add(vehicle)
+                    db.flush()
             invoice = Invoice(
                 user_id=user.id,
                 gdrive_file_id=gdrive_id,
@@ -479,6 +504,7 @@ async def import_gdrive(
                 payment_type=parsed.get('payment_type', 'card'),
                 vs=parsed.get('vs'),
                 iban=parsed.get('iban'),
+                vehicle_id=vehicle.id if vehicle else None,
                 vehicle_registration=vehicle_registration,
                 is_vehicle_expense=bool(vehicle_registration),
                 content_sha256=content_sha256,
@@ -533,10 +559,34 @@ def update_invoice(
     update_data = update.model_dump(exclude_unset=True)
     if "document_type" in update_data:
         update_data["document_type"] = _normalize_document_type(update_data["document_type"])
-    if "vehicle_registration" in update_data:
-        update_data["vehicle_registration"] = _normalize_vehicle_registration(
-            update_data["vehicle_registration"]
-        )
+    if "vehicle_id" in update_data:
+        next_vehicle_id = update_data.pop("vehicle_id")
+        if next_vehicle_id is None:
+            update_data["vehicle_id"] = None
+            update_data["vehicle_registration"] = None
+        else:
+            selected_vehicle = db.query(Vehicle).filter(
+                Vehicle.id == next_vehicle_id,
+                Vehicle.user_id == user.id,
+            ).first()
+            if not selected_vehicle:
+                raise HTTPException(status_code=400, detail="Select a valid vehicle")
+            update_data["vehicle_id"] = selected_vehicle.id
+            # The registration stored on an invoice is a historical snapshot.
+            # Editing unrelated metadata must not rewrite old documents after a
+            # vehicle registration is changed in Settings.
+            update_data["vehicle_registration"] = (
+                invoice.vehicle_registration
+                if selected_vehicle.id == invoice.vehicle_id and invoice.vehicle_registration
+                else selected_vehicle.registration
+            )
+    elif "vehicle_registration" in update_data:
+        try:
+            update_data["vehicle_registration"] = normalize_vehicle_registration(
+                update_data["vehicle_registration"]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     next_is_vehicle_expense = update_data.get(
         "is_vehicle_expense", invoice.is_vehicle_expense
@@ -555,6 +605,10 @@ def update_invoice(
             status_code=400,
             detail="Unmatch this document before excluding it from accountant export",
         )
+
+    if update_data.get("is_vehicle_expense") is False:
+        update_data["vehicle_id"] = None
+        update_data["vehicle_registration"] = None
 
     if "include_in_export" in update_data:
         if update_data["include_in_export"] and not invoice.include_in_export:
