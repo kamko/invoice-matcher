@@ -7,6 +7,9 @@ Private web app for collecting invoices, reconciling them with bank transactions
 - requires Google sign-in and keeps business data scoped to the signed-in user
 - connects to Google Drive through the same Google authorization flow
 - uploads PDFs or imports existing Drive month folders
+- supports selecting multiple PDFs at once and choosing which files belong in the accountant export
+- blocks byte-identical duplicate PDFs before they are uploaded to Drive
+- stores vehicle-expense registrations in the compact `KE885HH` format and includes them in filenames
 - extracts invoice metadata with deterministic parsing and optional LLM assistance
 - classifies documents as invoices, receipts, or other documents
 - fetches bank transactions on demand and supports deterministic, learned, suggested, and manual matching
@@ -118,6 +121,8 @@ Back up the persistent data volume before replacing or migrating a deployment.
 
 - uploaded files go into Drive month folders named `YYYYMM`
 - uploaded files are renamed to `YYYY-MM-DD-NNN_payment-type_vendor-slug.pdf`
+- vehicle-expense filenames add the registration before `.pdf`
+- files excluded from accountant export remain available as internal references and are not bank-matched
 - cash invoices use the `cash` status and do not require a bank transaction match
 - accountant exports route files by document type into `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, and `OSTATNE`
 - the optional monthly statement is stored in `OSTATNE`

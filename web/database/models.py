@@ -123,8 +123,12 @@ class Invoice(Base):
     vs = Column(String(50), nullable=True)  # Variable symbol (for wire)
     iban = Column(String(50), nullable=True)  # IBAN (for wire)
     comment = Column(Text, nullable=True)  # Context included in the accountant summary email
+    vehicle_registration = Column(String(16), nullable=True)
+    is_vehicle_expense = Column(Boolean, default=False, nullable=False)
+    content_sha256 = Column(String(64), nullable=True, index=True)
+    include_in_export = Column(Boolean, default=True, nullable=False)
     is_credit_note = Column(Boolean, default=False)
-    status = Column(String(20), default='unmatched')  # unmatched/matched/cash/exported
+    status = Column(String(20), default='unmatched')  # unmatched/matched/cash/exported/reference
     transaction_id = Column(String(100), nullable=True, index=True)  # FK to matched transaction
     created_at = Column(DateTime, default=datetime.utcnow)
 

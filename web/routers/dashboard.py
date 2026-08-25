@@ -140,6 +140,7 @@ def _get_exportable_invoices(
     end_date = datetime(year, month, monthrange(year, month)[1]).date()
     return db.query(Invoice).filter(
         Invoice.status.in_(['matched', 'cash']),
+        Invoice.include_in_export.is_(True),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
         Invoice.gdrive_file_id.isnot(None),
@@ -193,6 +194,7 @@ def get_dashboard(
     # Unmatched invoices (awaiting payment)
     unmatched_invoices = db.query(Invoice).filter(
         Invoice.status == 'unmatched',
+        Invoice.include_in_export.is_(True),
         Invoice.user_id == user.id,
     ).count()
 
@@ -203,6 +205,7 @@ def get_dashboard(
     # Matched this month
     matched_this_month = db.query(Invoice).filter(
         Invoice.status == 'matched',
+        Invoice.include_in_export.is_(True),
         Invoice.invoice_date >= current_month_start,
         Invoice.user_id == user.id,
     ).count()
@@ -210,6 +213,7 @@ def get_dashboard(
     # Ready to export (matched but not exported)
     ready_to_export = db.query(Invoice).filter(
         Invoice.status == 'matched',
+        Invoice.include_in_export.is_(True),
         Invoice.user_id == user.id,
     ).count()
 
@@ -277,6 +281,7 @@ def export_month(
     # Get matched/cash invoices for this month
     invoices = db.query(Invoice).filter(
         Invoice.status.in_(['matched', 'exported', 'cash']),
+        Invoice.include_in_export.is_(True),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
         Invoice.user_id == user.id,
@@ -368,6 +373,7 @@ def get_month_stats(
     invoices = db.query(Invoice).filter(
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
+        Invoice.include_in_export.is_(True),
         Invoice.user_id == user.id,
     ).all()
 
@@ -445,6 +451,7 @@ def get_monthly_summary(
     # Add cash invoices (no bank transaction)
     cash_invoices = db.query(Invoice).filter(
         Invoice.status == 'cash',
+        Invoice.include_in_export.is_(True),
         Invoice.user_id == user.id,
     ).all()
     for inv in cash_invoices:
