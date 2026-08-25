@@ -8,7 +8,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from web.database.models import Base, Invoice, User
+from web.database.models import Base, Invoice, User, Vehicle
 from web.routers.invoices import upload_invoice
 
 
@@ -40,6 +40,7 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 amount="249.0",
                 currency="EUR",
                 comment="  Poslat s augustovym exportom.  ",
+                vehicle_id=None,
                 vehicle_registration=None,
                 is_vehicle_expense=False,
                 include_in_export=True,
@@ -61,6 +62,14 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
         db.add(user)
         db.commit()
         db.refresh(user)
+        vehicle = Vehicle(
+            user_id=user.id,
+            name="Toyota Corolla",
+            registration="KE885HH",
+        )
+        db.add(vehicle)
+        db.commit()
+        db.refresh(vehicle)
 
         service = Mock()
         service.find_or_create_subfolder.return_value = "month-folder"
@@ -77,7 +86,8 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 amount="75.0",
                 currency="EUR",
                 comment=None,
-                vehicle_registration="ke-885-hh",
+                vehicle_id=vehicle.id,
+                vehicle_registration="BA123CD",
                 is_vehicle_expense=True,
                 include_in_export=True,
                 gdrive_folder_id="root-folder",
@@ -87,6 +97,7 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.vehicle_registration, "KE885HH")
+        self.assertEqual(result.vehicle_id, vehicle.id)
         self.assertTrue(result.is_vehicle_expense)
         self.assertTrue(result.filename.endswith("_KE885HH.pdf"))
         service.upload_pdf.assert_called_once()
@@ -118,6 +129,7 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 amount=None,
                 currency="EUR",
                 comment=None,
+                vehicle_id=None,
                 vehicle_registration="KE885HH",
                 is_vehicle_expense=True,
                 include_in_export=False,
@@ -163,6 +175,7 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                     amount="249.0",
                     currency="EUR",
                     comment=None,
+                    vehicle_id=None,
                     vehicle_registration=None,
                     is_vehicle_expense=False,
                     include_in_export=True,

@@ -18,6 +18,7 @@ class InvoiceBase(BaseModel):
     vs: Optional[str] = None
     iban: Optional[str] = None
     comment: Optional[str] = Field(default=None, max_length=2000)
+    vehicle_id: Optional[int] = None
     vehicle_registration: Optional[str] = Field(default=None, max_length=16)
     is_vehicle_expense: bool = False
     include_in_export: bool = True
@@ -42,6 +43,7 @@ class InvoiceUpdate(BaseModel):
     vs: Optional[str] = None
     iban: Optional[str] = None
     comment: Optional[str] = Field(default=None, max_length=2000)
+    vehicle_id: Optional[int] = None
     vehicle_registration: Optional[str] = Field(default=None, max_length=16)
     is_vehicle_expense: Optional[bool] = None
     include_in_export: Optional[bool] = None

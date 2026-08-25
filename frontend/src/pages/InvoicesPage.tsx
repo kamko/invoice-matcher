@@ -14,6 +14,7 @@ import {
   useRenameGDriveFile,
   useDashboard,
   useSettings,
+  useVehicles,
   showApiError,
   showSuccess,
   Invoice,
@@ -51,6 +52,7 @@ interface UploadDraft {
   amount: string
   paymentType: string
   comment: string
+  vehicleId: number | null
   vehicleRegistration: string
   isVehicleExpense: boolean
   includeInExport: boolean
@@ -68,6 +70,7 @@ const createUploadDraft = (file: File): UploadDraft => ({
   amount: '',
   paymentType: 'card',
   comment: '',
+  vehicleId: null,
   vehicleRegistration: '',
   isVehicleExpense: false,
   includeInExport: true,
@@ -104,6 +107,7 @@ export function InvoicesPage() {
   const [editIban, setEditIban] = useState('')
   const [editCurrency, setEditCurrency] = useState('EUR')
   const [editComment, setEditComment] = useState('')
+  const [editVehicleId, setEditVehicleId] = useState<number | null>(null)
   const [editVehicleRegistration, setEditVehicleRegistration] = useState('')
   const [editIsVehicleExpense, setEditIsVehicleExpense] = useState(false)
   const [editIncludeInExport, setEditIncludeInExport] = useState(true)
@@ -133,7 +137,9 @@ export function InvoicesPage() {
   const reanalyzeInvoice = useReanalyzeInvoice()
   const { data: gdriveStatus } = useGDriveStatus()
   const { data: settings } = useSettings()
+  const { data: vehicles = [] } = useVehicles(false)
   const renameGDriveFile = useRenameGDriveFile()
+  const activeVehicles = vehicles.filter((vehicle) => vehicle.is_active)
   const selectedUpload = uploadDrafts.find((draft) => draft.id === selectedUploadId) || null
   const uploadAnalyzing = uploadDrafts.some((draft) => draft.analyzing)
   const uploadVendor = selectedUpload?.vendor || ''
@@ -212,9 +218,7 @@ export function InvoicesPage() {
 
     const invalidDraft = uploadDrafts.find((draft) => (
       !draft.invoiceDate
-      || (draft.isVehicleExpense && !/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(
-        draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()
-      ))
+      || (draft.isVehicleExpense && !draft.vehicleId)
     ))
     if (invalidDraft) {
       setSelectedUploadId(invalidDraft.id)
@@ -222,7 +226,7 @@ export function InvoicesPage() {
         new Error(
           !invalidDraft.invoiceDate
             ? `Add a date for ${invalidDraft.file.name}`
-            : `Add a vehicle registration in the format KE885HH for ${invalidDraft.file.name}`
+            : `Select a vehicle for ${invalidDraft.file.name}`
         ),
         'Upload'
       )
@@ -243,6 +247,7 @@ export function InvoicesPage() {
           paymentType: draft.paymentType || 'card',
           amount: draft.amount || undefined,
           comment: draft.comment.trim() || undefined,
+          vehicleId: draft.vehicleId || undefined,
           vehicleRegistration: draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase() || undefined,
           isVehicleExpense: draft.isVehicleExpense,
           includeInExport: draft.includeInExport,
@@ -481,6 +486,10 @@ export function InvoicesPage() {
     setEditVs(inv.vs || '')
     setEditIban(inv.iban || '')
     setEditComment(inv.comment || '')
+    const linkedVehicle = vehicles.find((vehicle) => (
+      vehicle.id === inv.vehicle_id || vehicle.registration === inv.vehicle_registration
+    ))
+    setEditVehicleId(inv.vehicle_id || linkedVehicle?.id || null)
     setEditVehicleRegistration(inv.vehicle_registration || '')
     setEditIsVehicleExpense(inv.is_vehicle_expense || false)
     setEditIncludeInExport(inv.include_in_export)
@@ -492,8 +501,8 @@ export function InvoicesPage() {
     if (!selectedInvoice) return
 
     const normalizedRegistration = editVehicleRegistration.replace(/[\s-]/g, '').toUpperCase()
-    if (editIsVehicleExpense && !/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(normalizedRegistration)) {
-      showApiError(new Error('Use the vehicle registration format KE885HH'), 'Update invoice')
+    if (editIsVehicleExpense && !editVehicleId) {
+      showApiError(new Error('Select a vehicle'), 'Update invoice')
       return
     }
     if (selectedInvoice.status === 'matched' && !editIncludeInExport) {
@@ -540,6 +549,7 @@ export function InvoicesPage() {
         vs: editVs || undefined,
         iban: editIban || undefined,
         comment: editComment.trim(),
+        vehicle_id: editIsVehicleExpense ? editVehicleId : null,
         vehicle_registration: normalizedRegistration,
         is_vehicle_expense: editIsVehicleExpense,
         include_in_export: editIncludeInExport,
@@ -617,11 +627,23 @@ export function InvoicesPage() {
     { value: 'other', label: 'Other' },
   ]
 
-  const knownVehicleRegistrations = Array.from(new Set(
-    (data?.invoices || [])
-      .map((invoice) => invoice.vehicle_registration)
-      .filter((value): value is string => Boolean(value))
-  )).sort()
+  const activeVehicleOptions = [
+    {
+      value: '',
+      label: activeVehicles.length ? 'Select a vehicle' : 'No active vehicles configured',
+    },
+    ...activeVehicles.map((vehicle) => ({
+      value: String(vehicle.id),
+      label: `${vehicle.name} (${vehicle.registration})`,
+    })),
+  ]
+  const allVehicleOptions = [
+    { value: '', label: 'Select a vehicle' },
+    ...vehicles.map((vehicle) => ({
+      value: String(vehicle.id),
+      label: `${vehicle.name} (${vehicle.registration})${vehicle.is_active ? '' : ' · inactive'}`,
+    })),
+  ]
 
   return (
     <div className="space-y-6">
@@ -1109,9 +1131,15 @@ export function InvoicesPage() {
                   <input
                     type="checkbox"
                     checked={selectedUpload.isVehicleExpense}
-                    onChange={(event) => updateUploadDraft(selectedUpload.id, {
-                      isVehicleExpense: event.target.checked,
-                    })}
+                    onChange={(event) => {
+                      const enabled = event.target.checked
+                      const onlyVehicle = activeVehicles.length === 1 ? activeVehicles[0] : null
+                      updateUploadDraft(selectedUpload.id, {
+                        isVehicleExpense: enabled,
+                        vehicleId: enabled ? onlyVehicle?.id || null : null,
+                        vehicleRegistration: enabled ? onlyVehicle?.registration || '' : '',
+                      })
+                    }}
                     className="mt-0.5 h-4 w-4 shrink-0"
                   />
                   <span>
@@ -1119,7 +1147,7 @@ export function InvoicesPage() {
                       <Car className="h-3.5 w-3.5" /> Vehicle expense
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      A vehicle registration is required.
+                      Select a vehicle configured in Settings.
                     </span>
                   </span>
                 </label>
@@ -1128,25 +1156,24 @@ export function InvoicesPage() {
 
             {selectedUpload?.isVehicleExpense && (
               <div className="max-w-sm">
-                <Label htmlFor="upload-vehicle-registration">Vehicle registration (ŠPZ)</Label>
-                <Input
-                  id="upload-vehicle-registration"
-                  list="known-vehicle-registrations"
-                  value={selectedUpload.vehicleRegistration}
-                  onChange={(event) => updateUploadDraft(selectedUpload.id, {
-                    vehicleRegistration: event.target.value.toUpperCase(),
-                  })}
-                  placeholder="KE885HH"
-                  maxLength={9}
-                  autoComplete="off"
+                <Label htmlFor="upload-vehicle">Vehicle</Label>
+                <Select
+                  id="upload-vehicle"
+                  value={selectedUpload.vehicleId ? String(selectedUpload.vehicleId) : ''}
+                  onChange={(event) => {
+                    const vehicle = activeVehicles.find((item) => item.id === Number(event.target.value))
+                    updateUploadDraft(selectedUpload.id, {
+                      vehicleId: vehicle?.id || null,
+                      vehicleRegistration: vehicle?.registration || '',
+                    })
+                  }}
+                  options={activeVehicleOptions}
+                  disabled={activeVehicles.length === 0}
                 />
-                <datalist id="known-vehicle-registrations">
-                  {knownVehicleRegistrations.map((registration) => (
-                    <option key={registration} value={registration} />
-                  ))}
-                </datalist>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Saved without spaces or dashes and added to the PDF filename.
+                  {activeVehicles.length
+                    ? 'Its registration will be added to the PDF filename.'
+                    : 'Add a vehicle in Settings before uploading this document.'}
                 </p>
               </div>
             )}
@@ -1465,7 +1492,17 @@ export function InvoicesPage() {
                 <input
                   type="checkbox"
                   checked={editIsVehicleExpense}
-                  onChange={(event) => setEditIsVehicleExpense(event.target.checked)}
+                  onChange={(event) => {
+                    const enabled = event.target.checked
+                    const onlyVehicle = activeVehicles.length === 1 ? activeVehicles[0] : null
+                    setEditIsVehicleExpense(enabled)
+                    setEditVehicleId(enabled ? editVehicleId || onlyVehicle?.id || null : null)
+                    setEditVehicleRegistration(
+                      enabled
+                        ? editVehicleRegistration || onlyVehicle?.registration || ''
+                        : ''
+                    )
+                  }}
                   className="mt-0.5 h-4 w-4 shrink-0"
                 />
                 <span>
@@ -1473,7 +1510,7 @@ export function InvoicesPage() {
                     <Car className="h-3.5 w-3.5" /> Vehicle expense
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    Adds the registration to the PDF filename.
+                    Select a vehicle configured in Settings.
                   </span>
                 </span>
               </label>
@@ -1481,21 +1518,23 @@ export function InvoicesPage() {
 
             {editIsVehicleExpense && (
               <div className="max-w-sm">
-                <Label htmlFor="edit-vehicle-registration">Vehicle registration (ŠPZ)</Label>
-                <Input
-                  id="edit-vehicle-registration"
-                  list="known-vehicle-registrations-edit"
-                  value={editVehicleRegistration}
-                  onChange={(event) => setEditVehicleRegistration(event.target.value.toUpperCase())}
-                  placeholder="KE885HH"
-                  maxLength={9}
-                  autoComplete="off"
+                <Label htmlFor="edit-vehicle">Vehicle</Label>
+                <Select
+                  id="edit-vehicle"
+                  value={editVehicleId ? String(editVehicleId) : ''}
+                  onChange={(event) => {
+                    const vehicle = vehicles.find((item) => item.id === Number(event.target.value))
+                    setEditVehicleId(vehicle?.id || null)
+                    setEditVehicleRegistration(vehicle?.registration || '')
+                  }}
+                  options={allVehicleOptions}
+                  disabled={vehicles.length === 0}
                 />
-                <datalist id="known-vehicle-registrations-edit">
-                  {knownVehicleRegistrations.map((registration) => (
-                    <option key={registration} value={registration} />
-                  ))}
-                </datalist>
+                {vehicles.length === 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Add a vehicle in Settings first.
+                  </p>
+                )}
               </div>
             )}
 

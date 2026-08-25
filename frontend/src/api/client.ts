@@ -103,6 +103,7 @@ export interface Invoice {
   vs?: string
   iban?: string
   comment?: string
+  vehicle_id?: number
   vehicle_registration?: string
   is_vehicle_expense: boolean
   include_in_export: boolean
@@ -388,6 +389,7 @@ export function useUploadInvoice() {
       paymentType,
       amount,
       comment,
+      vehicleId,
       vehicleRegistration,
       isVehicleExpense,
       includeInExport,
@@ -401,6 +403,7 @@ export function useUploadInvoice() {
       paymentType?: string
       amount?: string
       comment?: string
+      vehicleId?: number
       vehicleRegistration?: string
       isVehicleExpense?: boolean
       includeInExport?: boolean
@@ -416,6 +419,7 @@ export function useUploadInvoice() {
       if (paymentType) formData.append('payment_type', paymentType)
       if (amount) formData.append('amount', amount)
       if (comment) formData.append('comment', comment)
+      if (vehicleId !== undefined) formData.append('vehicle_id', String(vehicleId))
       if (vehicleRegistration) formData.append('vehicle_registration', vehicleRegistration)
       formData.append('is_vehicle_expense', isVehicleExpense ? 'true' : 'false')
       formData.append('include_in_export', includeInExport === false ? 'false' : 'true')
@@ -481,6 +485,7 @@ export function useUpdateInvoice() {
       vs?: string
       iban?: string
       comment?: string
+      vehicle_id?: number | null
       vehicle_registration?: string
       is_vehicle_expense?: boolean
       include_in_export?: boolean
@@ -908,6 +913,50 @@ export function useSetSetting() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
     },
+  })
+}
+
+export interface Vehicle {
+  id: number
+  name: string
+  registration: string
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+export function useVehicles(activeOnly = true) {
+  return useQuery({
+    queryKey: ['vehicles', activeOnly],
+    queryFn: () => fetchJson<Vehicle[]>(`/vehicles?active_only=${activeOnly}`),
+  })
+}
+
+export function useCreateVehicle() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { name: string; registration: string }) =>
+      fetchJson<Vehicle>('/vehicles', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vehicles'] }),
+  })
+}
+
+export function useUpdateVehicle() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ vehicleId, ...data }: {
+      vehicleId: number
+      name?: string
+      registration?: string
+      is_active?: boolean
+    }) => fetchJson<Vehicle>(`/vehicles/${vehicleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vehicles'] }),
   })
 }
 

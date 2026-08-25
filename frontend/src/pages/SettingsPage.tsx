@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, useMailjetSenderStatus, showSuccess, showApiError } from '../api/client'
+import { authFetch, useSettings, useSetSetting, useGDriveStatus, useGDriveFolders, useGDriveFolderInfo, useAppConfig, useImportGDrive, useImportSubfolders, useFioVault, useSaveFioVault, useDeleteFioVault, useMailjetSenderStatus, useVehicles, useCreateVehicle, useUpdateVehicle, showSuccess, showApiError } from '../api/client'
+import type { Vehicle } from '../api/client'
 import { useAuth } from '../auth'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -13,7 +14,7 @@ import {
   DialogFooter,
 } from '../components/ui/dialog'
 import { Checkbox } from '../components/ui/checkbox'
-import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check, Mail } from 'lucide-react'
+import { Loader2, Save, Eye, EyeOff, Cloud, CloudOff, FolderOpen, ChevronRight, ArrowLeft, Search, Download, Check, Mail, Car, Pencil } from 'lucide-react'
 import { clearLegacyFioToken, clearRememberedVaultPassword, encryptSecret, getLegacyFioToken, hasPersistentVaultPassword, rememberVaultPassword } from '../lib/crypto'
 
 const DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE = `Posielam doklady za obdobie {period}.
@@ -31,6 +32,9 @@ export function SettingsPage() {
   const saveFioVault = useSaveFioVault()
   const deleteFioVault = useDeleteFioVault()
   const { data: appConfig } = useAppConfig()
+  const { data: vehicles = [], isLoading: vehiclesLoading } = useVehicles(false)
+  const createVehicle = useCreateVehicle()
+  const updateVehicle = useUpdateVehicle()
   const savedMailjetSenderEmail = settings?.mailjet_sender_email || ''
   const { data: mailjetSenderStatus, isLoading: mailjetSenderStatusLoading, isError: mailjetSenderStatusError } = useMailjetSenderStatus(
     savedMailjetSenderEmail,
@@ -65,6 +69,11 @@ export function SettingsPage() {
   const [currentFolderId, setCurrentFolderId] = useState('root')
   const [folderPath, setFolderPath] = useState<Array<{ id: string; name: string }>>([{ id: 'root', name: 'My Drive' }])
   const [folderSearch, setFolderSearch] = useState('')
+  const [newVehicleName, setNewVehicleName] = useState('')
+  const [newVehicleRegistration, setNewVehicleRegistration] = useState('')
+  const [editingVehicleId, setEditingVehicleId] = useState<number | null>(null)
+  const [editingVehicleName, setEditingVehicleName] = useState('')
+  const [editingVehicleRegistration, setEditingVehicleRegistration] = useState('')
 
   const { data: foldersData, isLoading: foldersLoading } = useGDriveFolders(
     showFolderPicker ? currentFolderId : '',
@@ -286,6 +295,66 @@ export function SettingsPage() {
       refetch()
     } catch (error) {
       showApiError(error, 'Save email template')
+    }
+  }
+
+  const normalizeRegistration = (value: string) => value.replace(/[\s-]/g, '').toUpperCase()
+
+  const validateVehicle = (name: string, registration: string) => {
+    if (!name.trim()) {
+      throw new Error('Enter a vehicle name')
+    }
+    if (!/^[A-Z]{2}\d{3}[A-Z]{2}$/.test(normalizeRegistration(registration))) {
+      throw new Error('Use the registration format KE885HH')
+    }
+  }
+
+  const handleCreateVehicle = async () => {
+    try {
+      validateVehicle(newVehicleName, newVehicleRegistration)
+      await createVehicle.mutateAsync({
+        name: newVehicleName.trim(),
+        registration: normalizeRegistration(newVehicleRegistration),
+      })
+      setNewVehicleName('')
+      setNewVehicleRegistration('')
+      showSuccess('Vehicle added')
+    } catch (error) {
+      showApiError(error, 'Add vehicle')
+    }
+  }
+
+  const startEditingVehicle = (vehicle: Vehicle) => {
+    setEditingVehicleId(vehicle.id)
+    setEditingVehicleName(vehicle.name)
+    setEditingVehicleRegistration(vehicle.registration)
+  }
+
+  const handleUpdateVehicle = async () => {
+    if (!editingVehicleId) return
+    try {
+      validateVehicle(editingVehicleName, editingVehicleRegistration)
+      await updateVehicle.mutateAsync({
+        vehicleId: editingVehicleId,
+        name: editingVehicleName.trim(),
+        registration: normalizeRegistration(editingVehicleRegistration),
+      })
+      setEditingVehicleId(null)
+      showSuccess('Vehicle updated')
+    } catch (error) {
+      showApiError(error, 'Update vehicle')
+    }
+  }
+
+  const handleToggleVehicle = async (vehicle: Vehicle) => {
+    try {
+      await updateVehicle.mutateAsync({
+        vehicleId: vehicle.id,
+        is_active: !vehicle.is_active,
+      })
+      showSuccess(vehicle.is_active ? 'Vehicle deactivated' : 'Vehicle activated')
+    } catch (error) {
+      showApiError(error, vehicle.is_active ? 'Deactivate vehicle' : 'Activate vehicle')
     }
   }
 
@@ -780,6 +849,123 @@ export function SettingsPage() {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Vehicles */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Vehicles</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="new-vehicle-name">Vehicle name</Label>
+                <Input
+                  id="new-vehicle-name"
+                  value={newVehicleName}
+                  onChange={(event) => setNewVehicleName(event.target.value)}
+                  placeholder="e.g. Toyota Corolla"
+                  maxLength={100}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-vehicle-registration">Registration (ŠPZ)</Label>
+                <Input
+                  id="new-vehicle-registration"
+                  value={newVehicleRegistration}
+                  onChange={(event) => setNewVehicleRegistration(event.target.value.toUpperCase())}
+                  placeholder="KE885HH"
+                  maxLength={9}
+                  autoComplete="off"
+                />
+              </div>
+              <Button
+                onClick={handleCreateVehicle}
+                disabled={createVehicle.isPending || !newVehicleName.trim() || !newVehicleRegistration.trim()}
+              >
+                <Car className="mr-1 h-4 w-4" />
+                Add vehicle
+              </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Active vehicles appear in the expense upload dropdown. Existing PDFs keep their stored registration.
+            </p>
+
+            {vehiclesLoading ? (
+              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading vehicles...
+              </div>
+            ) : vehicles.length === 0 ? (
+              <div className="rounded-md border border-dashed px-4 py-6 text-center">
+                <Car className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
+                <p className="text-sm font-medium">No vehicles configured</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add your first vehicle to classify fuel and other car expenses.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-md border">
+                {vehicles.map((vehicle) => (
+                  <div key={vehicle.id} className="border-b p-3 last:border-b-0">
+                    {editingVehicleId === vehicle.id ? (
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-end">
+                        <div className="space-y-2">
+                          <Label htmlFor={`vehicle-name-${vehicle.id}`}>Vehicle name</Label>
+                          <Input
+                            id={`vehicle-name-${vehicle.id}`}
+                            value={editingVehicleName}
+                            onChange={(event) => setEditingVehicleName(event.target.value)}
+                            maxLength={100}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`vehicle-registration-${vehicle.id}`}>Registration</Label>
+                          <Input
+                            id={`vehicle-registration-${vehicle.id}`}
+                            value={editingVehicleRegistration}
+                            onChange={(event) => setEditingVehicleRegistration(event.target.value.toUpperCase())}
+                            maxLength={9}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={handleUpdateVehicle} disabled={updateVehicle.isPending}>
+                            Save
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingVehicleId(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{vehicle.name}</span>
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{vehicle.registration}</code>
+                            {!vehicle.is_active && <span className="text-xs text-muted-foreground">Inactive</span>}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => startEditingVehicle(vehicle)}>
+                            <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleToggleVehicle(vehicle)}
+                            disabled={updateVehicle.isPending}
+                          >
+                            {vehicle.is_active ? 'Deactivate' : 'Activate'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

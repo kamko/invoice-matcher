@@ -21,6 +21,7 @@ from web.routers.gdrive import router as gdrive_router
 from web.routers.settings import router as settings_router
 from web.routers.secrets import router as secrets_router
 from web.routers.sse import router as sse_router
+from web.routers.vehicles import router as vehicles_router
 
 
 @asynccontextmanager
@@ -107,6 +108,7 @@ app.include_router(gdrive_router)
 app.include_router(settings_router)
 app.include_router(secrets_router)
 app.include_router(sse_router)
+app.include_router(vehicles_router)
 
 
 @app.get("/api/health")
