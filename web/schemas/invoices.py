@@ -89,6 +89,7 @@ class InvoiceListResponse(BaseModel):
     """Response for listing invoices."""
     invoices: List[InvoiceResponse]
     total: int
+    attachments: int = 0
     unmatched: int
     matched: int
 

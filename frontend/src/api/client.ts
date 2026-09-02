@@ -119,6 +119,7 @@ export interface Invoice {
 export interface InvoiceListResponse {
   invoices: Invoice[]
   total: number
+  attachments: number
   unmatched: number
   matched: number
 }

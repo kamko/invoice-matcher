@@ -116,12 +116,27 @@ def list_invoices(
 
     invoices = query.order_by(Invoice.invoice_date.desc()).all()
 
+    # Attachments follow every matching primary document even when the active
+    # status or document-type filter would normally hide reference rows.
+    primary_ids = [invoice.id for invoice in invoices if invoice.parent_invoice_id is None]
+    listed_ids = {invoice.id for invoice in invoices}
+    if primary_ids:
+        linked_attachments = db.query(Invoice).filter(
+            Invoice.user_id == user.id,
+            Invoice.parent_invoice_id.in_(primary_ids),
+        ).order_by(Invoice.parent_invoice_id.asc(), Invoice.attachment_index.asc()).all()
+        invoices.extend(
+            attachment for attachment in linked_attachments if attachment.id not in listed_ids
+        )
+
     unmatched = sum(1 for i in invoices if i.status == 'unmatched')
     matched = sum(1 for i in invoices if i.status == 'matched')
+    attachment_count = sum(1 for i in invoices if i.parent_invoice_id is not None)
 
     return InvoiceListResponse(
         invoices=[_invoice_to_response(i) for i in invoices],
-        total=len(invoices),
+        total=len(invoices) - attachment_count,
+        attachments=attachment_count,
         unmatched=unmatched,
         matched=matched,
     )

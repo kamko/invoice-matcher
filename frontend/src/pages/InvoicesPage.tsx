@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useSearch } from 'wouter'
 import {
   authFetch,
@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip } from 'lucide-react'
+import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip, ChevronDown, ChevronRight } from 'lucide-react'
 
 interface UploadDraft {
   id: string
@@ -99,6 +99,7 @@ export function InvoicesPage() {
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<number>>(new Set())
   const [uploadDrafts, setUploadDrafts] = useState<UploadDraft[]>([])
   const [selectedUploadId, setSelectedUploadId] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -751,6 +752,82 @@ export function InvoicesPage() {
     })),
   ]
 
+  const listedInvoices = data?.invoices || []
+  const listedInvoiceIds = new Set(listedInvoices.map((invoice) => invoice.id))
+  const attachmentsByParent = new Map<number, Invoice[]>()
+  listedInvoices.forEach((invoice) => {
+    if (!invoice.parent_invoice_id) return
+    const attachments = attachmentsByParent.get(invoice.parent_invoice_id) || []
+    attachments.push(invoice)
+    attachments.sort((a, b) => (a.attachment_index || 0) - (b.attachment_index || 0))
+    attachmentsByParent.set(invoice.parent_invoice_id, attachments)
+  })
+  const topLevelInvoices = listedInvoices.filter((invoice) => (
+    !invoice.parent_invoice_id || !listedInvoiceIds.has(invoice.parent_invoice_id)
+  ))
+  const selectedInvoiceAttachmentCount = selectedInvoice
+    ? attachmentsByParent.get(selectedInvoice.id)?.length || 0
+    : 0
+
+  const toggleAttachments = (invoiceId: number) => {
+    setExpandedInvoiceIds((current) => {
+      const next = new Set(current)
+      if (next.has(invoiceId)) next.delete(invoiceId)
+      else next.add(invoiceId)
+      return next
+    })
+  }
+
+  const renderAttachmentRow = (attachment: Invoice, nested: boolean) => (
+    <TableRow key={attachment.id} className="bg-muted/30">
+      <TableCell className="text-muted-foreground">
+        {nested ? '' : attachment.invoice_date || '-'}
+      </TableCell>
+      <TableCell className={nested ? 'pl-8' : ''}>
+        <div className="flex max-w-xs items-start gap-2">
+          <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            {attachment.gdrive_file_id ? (
+              <a
+                href={`/api/invoices/${attachment.id}/pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-blue-600 hover:underline"
+              >
+                Open attachment {String(attachment.attachment_index || 1).padStart(2, '0')}
+              </a>
+            ) : (
+              <span className="font-medium">
+                Attachment {String(attachment.attachment_index || 1).padStart(2, '0')}
+              </span>
+            )}
+            <div className="truncate text-xs text-muted-foreground" title={attachment.filename}>
+              {attachment.filename}
+            </div>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="text-muted-foreground">{attachment.vendor || '-'}</TableCell>
+      <TableCell>-</TableCell>
+      <TableCell><Badge variant="outline">Attachment</Badge></TableCell>
+      <TableCell>-</TableCell>
+      <TableCell>{getStatusBadge(attachment.status)}</TableCell>
+      <TableCell>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setSelectedInvoice(attachment)
+            setShowDeleteModal(true)
+          }}
+          title="Delete attachment"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -797,6 +874,7 @@ export function InvoicesPage() {
       {data && (
         <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
           <span>Total: <strong>{data.total}</strong></span>
+          {data.attachments > 0 && <span>Attachments: <strong>{data.attachments}</strong></span>}
           <span>Unmatched: <strong className="text-orange-600">{data.unmatched}</strong></span>
           <span>Matched: <strong className="text-green-600">{data.matched}</strong></span>
         </div>
@@ -822,124 +900,149 @@ export function InvoicesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data?.invoices.map((inv) => (
-                  <TableRow key={inv.id} className={inv.status === 'unmatched' ? 'bg-orange-50' : ''}>
-                    <TableCell>{inv.invoice_date || '-'}</TableCell>
-                    <TableCell>
-                      <div className="flex max-w-xs items-center gap-2">
-                        <div className="truncate" title={inv.filename}>
-                        {inv.gdrive_file_id ? (
-                          <a
-                            href={`/api/invoices/${inv.id}/pdf`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            {inv.filename}
-                          </a>
-                        ) : (
-                          inv.filename
-                        )}
-                        </div>
-                        {inv.comment && (
-                          <MessageSquareText
-                            className="h-4 w-4 shrink-0 text-muted-foreground"
-                            aria-label="Has accountant comment"
-                          >
-                            <title>{inv.comment}</title>
-                          </MessageSquareText>
-                        )}
-                        {!inv.include_in_export && (
-                          <Archive className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Internal only">
-                            <title>Internal only, excluded from accountant export</title>
-                          </Archive>
-                        )}
-                      </div>
-                      {inv.vehicle_registration && (
-                        <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                          <Car className="h-3.5 w-3.5" />
-                          {inv.vehicle_registration}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>{inv.vendor || '-'}</TableCell>
-                    <TableCell>
-                      {formatAmount(inv.amount, inv.currency)}
-                      {inv.currency !== 'EUR' && (
-                        <span className="ml-1 text-xs text-orange-600 font-medium">{inv.currency}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>{getDocumentTypeBadge(inv.document_type)}</TableCell>
-                    <TableCell><Badge variant="outline">{inv.payment_type || 'card'}</Badge></TableCell>
-                    <TableCell>{getStatusBadge(inv.status)}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditModal(inv)}
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {inv.status === 'unmatched' && inv.include_in_export && (
-                          <>
+                {topLevelInvoices.map((inv) => {
+                  if (inv.parent_invoice_id) return renderAttachmentRow(inv, false)
+
+                  const attachments = attachmentsByParent.get(inv.id) || []
+                  const isExpanded = expandedInvoiceIds.has(inv.id)
+                  return (
+                    <Fragment key={inv.id}>
+                      <TableRow className={inv.status === 'unmatched' ? 'bg-orange-50' : ''}>
+                        <TableCell>{inv.invoice_date || '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex max-w-xs items-center gap-2">
+                            <div className="truncate" title={inv.filename}>
+                            {inv.gdrive_file_id ? (
+                              <a
+                                href={`/api/invoices/${inv.id}/pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {inv.filename}
+                              </a>
+                            ) : (
+                              inv.filename
+                            )}
+                            </div>
+                            {inv.comment && (
+                              <MessageSquareText
+                                className="h-4 w-4 shrink-0 text-muted-foreground"
+                                aria-label="Has accountant comment"
+                              >
+                                <title>{inv.comment}</title>
+                              </MessageSquareText>
+                            )}
+                            {!inv.include_in_export && (
+                              <Archive className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Internal only">
+                                <title>Internal only, excluded from accountant export</title>
+                              </Archive>
+                            )}
+                          </div>
+                          {inv.vehicle_registration && (
+                            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                              <Car className="h-3.5 w-3.5" />
+                              {inv.vehicle_registration}
+                            </div>
+                          )}
+                          {attachments.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleAttachments(inv.id)}
+                              aria-expanded={isExpanded}
+                              className="mt-1 inline-flex items-center gap-1 rounded text-xs font-medium text-blue-700 hover:underline"
+                            >
+                              {isExpanded
+                                ? <ChevronDown className="h-3.5 w-3.5" />
+                                : <ChevronRight className="h-3.5 w-3.5" />}
+                              <Paperclip className="h-3.5 w-3.5" />
+                              {attachments.length} {attachments.length === 1 ? 'attachment' : 'attachments'}
+                            </button>
+                          )}
+                        </TableCell>
+                        <TableCell>{inv.vendor || '-'}</TableCell>
+                        <TableCell>
+                          {formatAmount(inv.amount, inv.currency)}
+                          {inv.currency !== 'EUR' && (
+                            <span className="ml-1 text-xs text-orange-600 font-medium">{inv.currency}</span>
+                          )}
+                        </TableCell>
+                        <TableCell>{getDocumentTypeBadge(inv.document_type)}</TableCell>
+                        <TableCell>
+                          {inv.payment_type ? <Badge variant="outline">{inv.payment_type}</Badge> : '-'}
+                        </TableCell>
+                        <TableCell>{getStatusBadge(inv.status)}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => {
-                                setSelectedInvoice(inv)
-                                setShowMatchModal(true)
-                              }}
-                              title="Match to transaction"
+                              onClick={() => openEditModal(inv)}
+                              title="Edit"
                             >
-                              <CreditCard className="h-4 w-4" />
+                              <Pencil className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedInvoice(inv)
-                                setShowDeleteModal(true)
-                              }}
-                              title="Delete"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        )}
-                        {inv.status === 'matched' && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleUnmatch(inv)}
-                              title="Unmatch"
-                            >
-                              <Link2Off className="h-4 w-4" />
-                            </Button>
-                            <Button variant="outline" size="sm" disabled>
-                              <Check className="h-4 w-4" />
-                            </Button>
-                          </>
-                        )}
-                        {inv.status === 'reference' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedInvoice(inv)
-                              setShowDeleteModal(true)
-                            }}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                            {inv.status === 'unmatched' && inv.include_in_export && (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedInvoice(inv)
+                                    setShowMatchModal(true)
+                                  }}
+                                  title="Match to transaction"
+                                >
+                                  <CreditCard className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedInvoice(inv)
+                                    setShowDeleteModal(true)
+                                  }}
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                            {inv.status === 'matched' && (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleUnmatch(inv)}
+                                  title="Unmatch"
+                                >
+                                  <Link2Off className="h-4 w-4" />
+                                </Button>
+                                <Button variant="outline" size="sm" disabled>
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                            {inv.status === 'reference' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedInvoice(inv)
+                                  setShowDeleteModal(true)
+                                }}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {isExpanded && attachments.map((attachment) => renderAttachmentRow(attachment, true))}
+                    </Fragment>
+                  )
+                })}
                 {data?.invoices.length === 0 && (
                   <TableRow>
                       <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
@@ -1382,9 +1485,15 @@ export function InvoicesPage() {
       <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Invoice</DialogTitle>
+            <DialogTitle>{selectedInvoice?.parent_invoice_id ? 'Delete Attachment' : 'Delete Invoice'}</DialogTitle>
           </DialogHeader>
-          <p>Are you sure you want to delete this invoice?</p>
+          <p>
+            {selectedInvoice?.parent_invoice_id
+              ? 'Are you sure you want to delete this attachment?'
+              : selectedInvoiceAttachmentCount > 0
+                ? `This will also delete ${selectedInvoiceAttachmentCount} linked ${selectedInvoiceAttachmentCount === 1 ? 'attachment' : 'attachments'}.`
+                : 'Are you sure you want to delete this invoice?'}
+          </p>
           {selectedInvoice && (
             <div className="p-4 bg-muted rounded-lg text-sm">
               <div className="font-medium">{selectedInvoice.filename}</div>
