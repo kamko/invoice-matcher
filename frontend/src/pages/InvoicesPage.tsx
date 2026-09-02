@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive } from 'lucide-react'
+import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip } from 'lucide-react'
 
 interface UploadDraft {
   id: string
@@ -56,6 +56,10 @@ interface UploadDraft {
   vehicleRegistration: string
   isVehicleExpense: boolean
   includeInExport: boolean
+  isAttachment: boolean
+  attachmentIndex: number | null
+  parentInvoiceId?: number
+  parentFilename?: string
   skipAnalyze: boolean
   analyzing: boolean
   error?: string
@@ -74,6 +78,8 @@ const createUploadDraft = (file: File): UploadDraft => ({
   vehicleRegistration: '',
   isVehicleExpense: false,
   includeInExport: true,
+  isAttachment: false,
+  attachmentIndex: null,
   skipAnalyze: false,
   analyzing: false,
 })
@@ -163,6 +169,31 @@ export function InvoicesPage() {
     )))
   }
 
+  const getPrimaryUploadDraft = (drafts: UploadDraft[] = uploadDrafts) => (
+    drafts.find((draft) => !draft.isAttachment && draft.includeInExport)
+    || drafts.find((draft) => !draft.isAttachment)
+    || null
+  )
+
+  const setUploadRole = (draft: UploadDraft, isAttachment: boolean) => {
+    updateUploadDraft(draft.id, isAttachment ? {
+      isAttachment: true,
+      includeInExport: false,
+      documentType: 'other',
+      amount: '',
+      paymentType: '',
+      vehicleId: null,
+      vehicleRegistration: '',
+      isVehicleExpense: false,
+    } : {
+      isAttachment: false,
+      includeInExport: true,
+      attachmentIndex: null,
+      parentInvoiceId: undefined,
+      parentFilename: undefined,
+    })
+  }
+
   const handleMatch = async (transactionId: string) => {
     if (!selectedInvoice) return
     try {
@@ -216,7 +247,20 @@ export function InvoicesPage() {
       return
     }
 
-    const invalidDraft = uploadDrafts.find((draft) => (
+    const primaryDraft = getPrimaryUploadDraft()
+    const attachmentDrafts = uploadDrafts.filter((draft) => draft.isAttachment)
+    const unattachedDrafts = attachmentDrafts.filter((draft) => !draft.parentInvoiceId)
+    const primaryCandidates = uploadDrafts.filter((draft) => !draft.isAttachment)
+    if (unattachedDrafts.length > 0 && primaryCandidates.length !== 1) {
+      setSelectedUploadId(attachmentDrafts[0].id)
+      showApiError(
+        new Error('Upload one primary document with its attachments at a time'),
+        'Upload'
+      )
+      return
+    }
+
+    const invalidDraft = uploadDrafts.find((draft) => !draft.isAttachment && (
       !draft.invoiceDate
       || (draft.isVehicleExpense && !draft.vehicleId)
     ))
@@ -236,24 +280,56 @@ export function InvoicesPage() {
     setIsUploading(true)
     const successfulIds: string[] = []
     const failures: Array<{ id: string; message: string }> = []
+    const attachmentIndexes = new Map(
+      attachmentDrafts.map((draft, index) => [draft.id, draft.attachmentIndex || index + 1])
+    )
+    setUploadDrafts((drafts) => drafts.map((draft) => (
+      draft.isAttachment
+        ? { ...draft, attachmentIndex: attachmentIndexes.get(draft.id) || null }
+        : draft
+    )))
+    let uploadedPrimary: Invoice | null = null
+    const orderedDrafts = [
+      ...(primaryDraft ? [primaryDraft] : []),
+      ...uploadDrafts.filter((draft) => !draft.isAttachment && draft.id !== primaryDraft?.id),
+      ...attachmentDrafts,
+    ]
 
-    for (const draft of uploadDrafts) {
+    for (const draft of orderedDrafts) {
       try {
-        await uploadInvoice.mutateAsync({
+        const parentInvoiceId = draft.isAttachment
+          ? draft.parentInvoiceId || uploadedPrimary?.id
+          : undefined
+        if (draft.isAttachment && !parentInvoiceId) {
+          throw new Error('The primary document must upload before its attachments')
+        }
+        const result = await uploadInvoice.mutateAsync({
           file: draft.file,
-          vendor: draft.vendor || undefined,
-          documentType: draft.documentType || undefined,
-          invoiceDate: draft.invoiceDate || undefined,
-          paymentType: draft.paymentType || 'card',
-          amount: draft.amount || undefined,
-          comment: draft.comment.trim() || undefined,
-          vehicleId: draft.vehicleId || undefined,
-          vehicleRegistration: draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase() || undefined,
-          isVehicleExpense: draft.isVehicleExpense,
-          includeInExport: draft.includeInExport,
+          vendor: draft.isAttachment ? undefined : draft.vendor || undefined,
+          documentType: draft.isAttachment ? 'other' : draft.documentType || undefined,
+          invoiceDate: draft.isAttachment ? undefined : draft.invoiceDate || undefined,
+          paymentType: draft.isAttachment ? undefined : draft.paymentType || 'card',
+          amount: draft.isAttachment ? undefined : draft.amount || undefined,
+          comment: draft.isAttachment ? undefined : draft.comment.trim() || undefined,
+          vehicleId: draft.isAttachment ? undefined : draft.vehicleId || undefined,
+          vehicleRegistration: draft.isAttachment
+            ? undefined
+            : draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase() || undefined,
+          isVehicleExpense: draft.isAttachment ? false : draft.isVehicleExpense,
+          includeInExport: draft.isAttachment ? false : draft.includeInExport,
+          parentInvoiceId,
+          attachmentIndex: draft.isAttachment ? attachmentIndexes.get(draft.id) : undefined,
           gdriveFolderId: folderId,
-          skipAnalyze: draft.skipAnalyze,
+          skipAnalyze: draft.isAttachment || draft.skipAnalyze,
         })
+        if (draft.id === primaryDraft?.id) {
+          uploadedPrimary = result
+          setUploadDrafts((drafts) => drafts.map((item) => item.isAttachment ? {
+            ...item,
+            parentInvoiceId: result.id,
+            parentFilename: result.filename,
+          } : item))
+        }
         successfulIds.push(draft.id)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Upload failed'
@@ -293,9 +369,7 @@ export function InvoicesPage() {
     })
   }
 
-  // Generate preview of the final filename
-  const getPreviewFilename = (draft: UploadDraft | null = selectedUpload) => {
-    if (!draft) return null
+  const getStandardPreviewFilename = (draft: UploadDraft) => {
     if (!draft.invoiceDate) return null
     const vendorSlug = draft.vendor
       ? draft.vendor.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 30)
@@ -304,6 +378,19 @@ export function InvoicesPage() {
       ? `_${draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()}`
       : ''
     return `${draft.invoiceDate}-001_${draft.paymentType || 'card'}_${vendorSlug}${plateSuffix}.pdf`
+  }
+
+  // Generate preview of the final filename
+  const getPreviewFilename = (draft: UploadDraft | null = selectedUpload) => {
+    if (!draft) return null
+    if (!draft.isAttachment) return getStandardPreviewFilename(draft)
+
+    const primary = getPrimaryUploadDraft()
+    const parentFilename = draft.parentFilename || (primary ? getStandardPreviewFilename(primary) : null)
+    if (!parentFilename) return null
+    const index = draft.attachmentIndex
+      || uploadDrafts.filter((item) => item.isAttachment).findIndex((item) => item.id === draft.id) + 1
+    return `${parentFilename.replace(/\.pdf$/i, '')}_att_${String(index).padStart(2, '0')}.pdf`
   }
 
   const handleFileDrop = async (files: File[]) => {
@@ -325,10 +412,23 @@ export function InvoicesPage() {
     if (newDrafts.length === 0) return
     setUploadDrafts((drafts) => [...drafts, ...newDrafts])
     setSelectedUploadId((current) => current || newDrafts[0].id)
-    await Promise.all(newDrafts.map((draft) => analyzeUploadedFile(draft.id, draft.file)))
+    const attachmentResults = await Promise.all(
+      newDrafts.map((draft) => analyzeUploadedFile(draft.id, draft.file))
+    )
+    setUploadDrafts((drafts) => {
+      const ordered = [...drafts].sort((a, b) => Number(a.isAttachment) - Number(b.isAttachment))
+      let attachmentIndex = 0
+      return ordered.map((draft) => draft.isAttachment
+        ? { ...draft, attachmentIndex: ++attachmentIndex }
+        : draft)
+    })
+    if (uploadDrafts.length === 0) {
+      const firstPrimaryIndex = attachmentResults.findIndex((isAttachment) => isAttachment === false)
+      if (firstPrimaryIndex >= 0) setSelectedUploadId(newDrafts[firstPrimaryIndex].id)
+    }
   }
 
-  const analyzeUploadedFile = async (id: string, file: File, showToast = false) => {
+  const analyzeUploadedFile = async (id: string, file: File, showToast = false): Promise<boolean | null> => {
     updateUploadDraft(id, { analyzing: true, error: undefined })
     try {
       const formData = new FormData()
@@ -343,15 +443,18 @@ export function InvoicesPage() {
         const data = await response.json()
         // Check if we got any extracted data
         const extracted = data.extracted || {}
+        const isAttachment = Boolean(extracted.is_attachment)
         const hasData = extracted.vendor || extracted.document_type || extracted.amount || extracted.invoice_date || extracted.payment_type
 
         setUploadDrafts((drafts) => drafts.map((draft) => draft.id === id ? {
           ...draft,
           vendor: extracted.vendor || draft.vendor,
-          documentType: extracted.document_type || draft.documentType,
-          amount: extracted.amount || draft.amount,
+          documentType: isAttachment ? 'other' : extracted.document_type || draft.documentType,
+          amount: isAttachment ? '' : extracted.amount || draft.amount,
           invoiceDate: extracted.invoice_date || draft.invoiceDate,
-          paymentType: extracted.payment_type || draft.paymentType,
+          paymentType: isAttachment ? '' : extracted.payment_type || draft.paymentType,
+          includeInExport: isAttachment ? false : draft.includeInExport,
+          isAttachment,
           analyzing: false,
           error: undefined,
         } : draft))
@@ -365,11 +468,13 @@ export function InvoicesPage() {
             showApiError(new Error('No data extracted from PDF'), 'Analyze')
           }
         }
+        return isAttachment
       } else {
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
         if (showToast) {
           showApiError(new Error(error.detail || 'Analyze failed'), 'Analyze')
         }
+        return null
       }
     } catch (error) {
       updateUploadDraft(id, {
@@ -378,6 +483,7 @@ export function InvoicesPage() {
       if (showToast) {
         showApiError(error, 'Analyze PDF')
       }
+      return null
     } finally {
       setUploadDrafts((drafts) => drafts.map((draft) => (
         draft.id === id ? { ...draft, analyzing: false } : draft
@@ -1011,8 +1117,8 @@ export function InvoicesPage() {
                         {draft.vehicleRegistration.replace(/[\s-]/g, '').toUpperCase()}
                       </span>
                     )}
-                    <Badge variant={draft.includeInExport ? 'default' : 'outline'}>
-                      {draft.includeInExport ? 'Export' : 'Internal'}
+                    <Badge variant={draft.isAttachment ? 'outline' : draft.includeInExport ? 'default' : 'outline'}>
+                      {draft.isAttachment ? 'Attachment' : draft.includeInExport ? 'Export' : 'Internal'}
                     </Badge>
                     <button
                       type="button"
@@ -1037,23 +1143,49 @@ export function InvoicesPage() {
             )}
 
             {selectedUpload && (
-              <div className="flex items-center justify-between gap-3 border-b pb-3">
+              <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 sm:flex-row sm:items-center">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">Document details</p>
+                  <p className="truncate text-sm font-medium">
+                    {selectedUpload.isAttachment ? 'Attachment details' : 'Document details'}
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">{selectedUpload.file.name}</p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => analyzeUploadedFile(selectedUpload.id, selectedUpload.file, true)}
-                  disabled={selectedUpload.analyzing}
-                >
-                  <RefreshCw className={`mr-1 h-4 w-4 ${selectedUpload.analyzing ? 'animate-spin' : ''}`} />
-                  Re-analyze
-                </Button>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUploadRole(selectedUpload, !selectedUpload.isAttachment)}
+                  >
+                    <Paperclip className="mr-1 h-4 w-4" />
+                    {selectedUpload.isAttachment ? 'Treat as document' : 'Mark as attachment'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => analyzeUploadedFile(selectedUpload.id, selectedUpload.file, true)}
+                    disabled={selectedUpload.analyzing}
+                  >
+                    <RefreshCw className={`mr-1 h-4 w-4 ${selectedUpload.analyzing ? 'animate-spin' : ''}`} />
+                    Re-analyze
+                  </Button>
+                </div>
               </div>
             )}
 
+            {selectedUpload?.isAttachment && (
+              <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-4">
+                <Paperclip className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Supporting attachment</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Stored with {getPrimaryUploadDraft()?.file.name || selectedUpload.parentFilename || 'the primary document'}.
+                    Amount and payment details are not saved for attachments.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {selectedUpload && !selectedUpload.isAttachment && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="min-w-0">
                 <Label>Vendor</Label>
@@ -1072,7 +1204,9 @@ export function InvoicesPage() {
                 />
               </div>
             </div>
+            )}
 
+            {selectedUpload && !selectedUpload.isAttachment && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="min-w-0">
                 <Label>Invoice Date</Label>
@@ -1091,7 +1225,9 @@ export function InvoicesPage() {
                 />
               </div>
             </div>
+            )}
 
+            {selectedUpload && !selectedUpload.isAttachment && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="min-w-0">
                 <Label>Payment Type</Label>
@@ -1108,8 +1244,9 @@ export function InvoicesPage() {
               </div>
               <div />
             </div>
+            )}
 
-            {selectedUpload && (
+            {selectedUpload && !selectedUpload.isAttachment && (
               <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <label className="flex cursor-pointer items-start gap-2">
                   <input
@@ -1154,7 +1291,7 @@ export function InvoicesPage() {
               </div>
             )}
 
-            {selectedUpload?.isVehicleExpense && (
+            {selectedUpload && !selectedUpload.isAttachment && selectedUpload.isVehicleExpense && (
               <div className="max-w-sm">
                 <Label htmlFor="upload-vehicle">Vehicle</Label>
                 <Select
@@ -1178,6 +1315,7 @@ export function InvoicesPage() {
               </div>
             )}
 
+            {selectedUpload && !selectedUpload.isAttachment && (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label htmlFor="upload-comment">Accountant Comment</Label>
@@ -1196,6 +1334,7 @@ export function InvoicesPage() {
                 Included when this document is emailed to the accountant.
               </p>
             </div>
+            )}
 
             {/* Filename Preview */}
             {getPreviewFilename() && (
@@ -1206,6 +1345,7 @@ export function InvoicesPage() {
             )}
 
             {/* Skip analyze checkbox */}
+            {selectedUpload && !selectedUpload.isAttachment && (
             <div className="flex min-w-0 items-start gap-2">
               <input
                 type="checkbox"
@@ -1218,6 +1358,7 @@ export function InvoicesPage() {
                 Skip PDF analysis (use manually entered values only)
               </Label>
             </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowUploadModal(false)} disabled={isUploading}>

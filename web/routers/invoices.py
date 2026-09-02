@@ -75,6 +75,8 @@ def _invoice_to_response(invoice: Invoice) -> InvoiceResponse:
         vehicle_registration=invoice.vehicle_registration,
         is_vehicle_expense=invoice.is_vehicle_expense,
         include_in_export=invoice.include_in_export,
+        parent_invoice_id=invoice.parent_invoice_id,
+        attachment_index=invoice.attachment_index,
         is_credit_note=invoice.is_credit_note,
         status=invoice.status,
         transaction_id=invoice.transaction_id,
@@ -167,6 +169,7 @@ async def analyze_pdf(file: UploadFile = File(...)):
                 "payment_type": parsed.get('payment_type'),
                 "vs": parsed.get('vs'),
                 "iban": parsed.get('iban'),
+                "is_attachment": parsed.get('is_attachment', False),
             }
         }
     except ValueError as e:
@@ -195,6 +198,8 @@ async def upload_invoice(
     vehicle_registration: Optional[str] = Form(None, max_length=16),
     is_vehicle_expense: bool = Form(False),
     include_in_export: bool = Form(True),
+    parent_invoice_id: Optional[int] = Form(None),
+    attachment_index: Optional[int] = Form(None),
     gdrive_folder_id: str = Form(...),  # Required - must specify GDrive folder
     skip_analyze: Optional[bool] = Form(False),  # Skip PDF analysis, use provided values
     user: User = Depends(get_current_user),
@@ -222,8 +227,31 @@ async def upload_invoice(
             detail=f"This PDF is already stored as {duplicate.filename}",
         )
 
+    parent_invoice = None
+    if parent_invoice_id is not None:
+        parent_invoice = db.query(Invoice).filter(
+            Invoice.id == parent_invoice_id,
+            Invoice.user_id == user.id,
+            Invoice.parent_invoice_id.is_(None),
+        ).first()
+        if not parent_invoice:
+            raise HTTPException(status_code=400, detail="Select a valid primary document")
+        if not attachment_index or attachment_index < 1:
+            raise HTTPException(status_code=400, detail="Attachment index must be at least 1")
+        if not parent_invoice.invoice_date:
+            raise HTTPException(status_code=400, detail="Primary document has no invoice date")
+        existing_attachment = db.query(Invoice).filter(
+            Invoice.parent_invoice_id == parent_invoice.id,
+            Invoice.attachment_index == attachment_index,
+        ).first()
+        if existing_attachment:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Attachment {attachment_index:02d} already exists",
+            )
+
     selected_vehicle = None
-    if vehicle_id is not None:
+    if parent_invoice is None and vehicle_id is not None:
         selected_vehicle = db.query(Vehicle).filter(
             Vehicle.id == vehicle_id,
             Vehicle.user_id == user.id,
@@ -232,18 +260,22 @@ async def upload_invoice(
         if not selected_vehicle:
             raise HTTPException(status_code=400, detail="Select an active vehicle")
 
-    try:
-        final_vehicle_registration = (
-            selected_vehicle.registration
-            if selected_vehicle
-            else normalize_vehicle_registration(vehicle_registration)
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not is_vehicle_expense:
+    if parent_invoice:
+        final_vehicle_registration = None
+    else:
+        try:
+            final_vehicle_registration = (
+                selected_vehicle.registration
+                if selected_vehicle
+                else normalize_vehicle_registration(vehicle_registration)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if parent_invoice is not None or not is_vehicle_expense:
         selected_vehicle = None
         final_vehicle_registration = None
-    if is_vehicle_expense and not final_vehicle_registration:
+        is_vehicle_expense = False
+    if parent_invoice is None and is_vehicle_expense and not final_vehicle_registration:
         raise HTTPException(
             status_code=400,
             detail="Vehicle registration is required for a vehicle expense",
@@ -258,16 +290,18 @@ async def upload_invoice(
     try:
         # Parse the PDF (unless skip_analyze is set)
         parsed = {}
-        if not skip_analyze:
+        if parent_invoice is None and not skip_analyze:
             try:
                 parsed = parse_uploaded_pdf(tmp_path)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
         # Use provided values or fall back to parsed
-        final_vendor = vendor or parsed.get('vendor')
+        final_vendor = parent_invoice.vendor if parent_invoice else vendor or parsed.get('vendor')
         final_date = None
-        if invoice_date:
+        if parent_invoice:
+            final_date = parent_invoice.invoice_date
+        elif invoice_date:
             final_date = datetime.strptime(invoice_date, '%Y-%m-%d').date()
         elif parsed.get('invoice_date'):
             final_date = parsed['invoice_date']
@@ -275,12 +309,14 @@ async def upload_invoice(
         if final_date is None:
             raise HTTPException(status_code=400, detail="Could not determine invoice date")
 
-        final_type = payment_type or parsed.get('payment_type', 'card')
-        final_document_type = _normalize_document_type(document_type or parsed.get('document_type'))
-        final_currency = currency or parsed.get('currency', 'EUR')
+        final_type = None if parent_invoice else payment_type or parsed.get('payment_type', 'card')
+        final_document_type = 'other' if parent_invoice else _normalize_document_type(document_type or parsed.get('document_type'))
+        final_currency = parent_invoice.currency if parent_invoice else currency or parsed.get('currency', 'EUR')
         # Use provided amount or fall back to parsed
         final_amount = None
-        if amount:
+        if parent_invoice:
+            final_amount = None
+        elif amount:
             final_amount = Decimal(amount)
         elif parsed.get('amount'):
             parsed_amount = parsed.get('amount')
@@ -301,6 +337,7 @@ async def upload_invoice(
         existing_invoices = db.query(Invoice).filter(
             Invoice.invoice_date == final_date,
             Invoice.user_id == user.id,
+            Invoice.parent_invoice_id.is_(None),
         ).all()
         next_seq = len(existing_invoices) + 1
 
@@ -310,8 +347,12 @@ async def upload_invoice(
             vendor_slug = re.sub(r'[^\w\s-]', '', final_vendor.lower())
             vendor_slug = re.sub(r'[\s]+', '-', vendor_slug)[:30]
 
-        plate_suffix = f"_{final_vehicle_registration}" if final_vehicle_registration else ""
-        proper_filename = f"{date_str}-{next_seq:03d}_{final_type}_{vendor_slug}{plate_suffix}.pdf"
+        if parent_invoice:
+            parent_stem = Path(parent_invoice.filename).stem
+            proper_filename = f"{parent_stem}_att_{attachment_index:02d}.pdf"
+        else:
+            plate_suffix = f"_{final_vehicle_registration}" if final_vehicle_registration else ""
+            proper_filename = f"{date_str}-{next_seq:03d}_{final_type}_{vendor_slug}{plate_suffix}.pdf"
 
         # Upload to GDrive (to the month subfolder) with proper filename
         try:
@@ -350,9 +391,11 @@ async def upload_invoice(
             vehicle_registration=final_vehicle_registration,
             is_vehicle_expense=is_vehicle_expense,
             content_sha256=content_sha256,
-            include_in_export=include_in_export,
+            include_in_export=False if parent_invoice else include_in_export,
+            parent_invoice_id=parent_invoice.id if parent_invoice else None,
+            attachment_index=attachment_index if parent_invoice else None,
             is_credit_note=parsed.get('is_credit_note', False),
-            status='unmatched' if include_in_export else 'reference',
+            status='unmatched' if include_in_export and not parent_invoice else 'reference',
             created_at=datetime.utcnow(),
         )
 
@@ -361,8 +404,9 @@ async def upload_invoice(
         db.refresh(invoice)
 
         # Try auto-matching
-        matching = MatchingService(db, user.id)
-        matching.run_auto_matching()
+        if not parent_invoice:
+            matching = MatchingService(db, user.id)
+            matching.run_auto_matching()
 
         # Refresh to get updated status
         db.refresh(invoice)
@@ -637,25 +681,34 @@ def delete_invoice(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    # Delete from GDrive first
-    gdrive_deleted = False
-    if invoice.gdrive_file_id:
+    attachments = db.query(Invoice).filter(
+        Invoice.parent_invoice_id == invoice.id,
+        Invoice.user_id == user.id,
+    ).order_by(Invoice.attachment_index.asc()).all()
+    documents = [*attachments, invoice]
+
+    # Delete the whole document group from GDrive first.
+    gdrive_deleted = 0
+    if any(document.gdrive_file_id for document in documents):
         service = get_gdrive_service_for_user(db, user)
+        for document in documents:
+            if not document.gdrive_file_id:
+                continue
+            try:
+                service.delete_file(document.gdrive_file_id)
+                gdrive_deleted += 1
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to delete from Google Drive: {e}")
 
-        try:
-            service.delete_file(invoice.gdrive_file_id)
-            gdrive_deleted = True
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to delete from Google Drive: {e}")
-
-    # Delete from PDF cache
-    if invoice.gdrive_file_id:
-        cache = db.query(PDFCache).filter(
-            PDFCache.gdrive_file_id == invoice.gdrive_file_id,
-            PDFCache.user_id == user.id,
-        ).first()
-        if cache:
-            db.delete(cache)
+    # Delete cached PDFs for the whole document group.
+    for document in documents:
+        if document.gdrive_file_id:
+            cache = db.query(PDFCache).filter(
+                PDFCache.gdrive_file_id == document.gdrive_file_id,
+                PDFCache.user_id == user.id,
+            ).first()
+            if cache:
+                db.delete(cache)
 
     # If matched, unmatch first
     if invoice.transaction_id:
@@ -666,12 +719,16 @@ def delete_invoice(
         if transaction:
             transaction.status = 'unmatched'
 
+    for attachment in attachments:
+        db.delete(attachment)
     db.delete(invoice)
     db.commit()
 
+    attachment_text = f" and {len(attachments)} attachments" if attachments else ""
+    drive_text = " from GDrive" if gdrive_deleted else ""
     return {
         "success": True,
-        "message": "Invoice deleted" + (" from GDrive" if gdrive_deleted else "")
+        "message": f"Invoice{attachment_text} deleted{drive_text}"
     }
 
 

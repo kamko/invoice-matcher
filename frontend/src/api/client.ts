@@ -107,6 +107,8 @@ export interface Invoice {
   vehicle_registration?: string
   is_vehicle_expense: boolean
   include_in_export: boolean
+  parent_invoice_id?: number
+  attachment_index?: number
   is_credit_note: boolean
   status: 'unmatched' | 'matched' | 'cash' | 'exported' | 'reference'
   transaction_id?: string
@@ -393,6 +395,8 @@ export function useUploadInvoice() {
       vehicleRegistration,
       isVehicleExpense,
       includeInExport,
+      parentInvoiceId,
+      attachmentIndex,
       gdriveFolderId,
       skipAnalyze,
     }: {
@@ -407,6 +411,8 @@ export function useUploadInvoice() {
       vehicleRegistration?: string
       isVehicleExpense?: boolean
       includeInExport?: boolean
+      parentInvoiceId?: number
+      attachmentIndex?: number
       gdriveFolderId: string  // Required - parent folder ID
       skipAnalyze?: boolean
     }): Promise<Invoice> => {
@@ -423,6 +429,8 @@ export function useUploadInvoice() {
       if (vehicleRegistration) formData.append('vehicle_registration', vehicleRegistration)
       formData.append('is_vehicle_expense', isVehicleExpense ? 'true' : 'false')
       formData.append('include_in_export', includeInExport === false ? 'false' : 'true')
+      if (parentInvoiceId !== undefined) formData.append('parent_invoice_id', String(parentInvoiceId))
+      if (attachmentIndex !== undefined) formData.append('attachment_index', String(attachmentIndex))
       if (skipAnalyze) formData.append('skip_analyze', 'true')
 
       const response = await authFetch('/invoices/upload', {

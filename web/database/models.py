@@ -146,6 +146,8 @@ class Invoice(Base):
     is_vehicle_expense = Column(Boolean, default=False, nullable=False)
     content_sha256 = Column(String(64), nullable=True, index=True)
     include_in_export = Column(Boolean, default=True, nullable=False)
+    parent_invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=True, index=True)
+    attachment_index = Column(Integer, nullable=True)
     is_credit_note = Column(Boolean, default=False)
     status = Column(String(20), default='unmatched')  # unmatched/matched/cash/exported/reference
     transaction_id = Column(String(100), nullable=True, index=True)  # FK to matched transaction
@@ -154,6 +156,7 @@ class Invoice(Base):
     __table_args__ = (
         UniqueConstraint('gdrive_file_id', 'receipt_index', name='uq_invoice_gdrive_receipt'),
         UniqueConstraint('transaction_id', name='uq_invoice_transaction'),  # 1:1 enforcement
+        UniqueConstraint('parent_invoice_id', 'attachment_index', name='uq_invoice_attachment_index'),
     )
 
 
