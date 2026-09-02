@@ -22,6 +22,8 @@ class InvoiceBase(BaseModel):
     vehicle_registration: Optional[str] = Field(default=None, max_length=16)
     is_vehicle_expense: bool = False
     include_in_export: bool = True
+    parent_invoice_id: Optional[int] = None
+    attachment_index: Optional[int] = None
     is_credit_note: bool = False
 
 

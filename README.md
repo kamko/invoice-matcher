@@ -8,6 +8,7 @@ Private web app for collecting invoices, reconciling them with bank transactions
 - connects to Google Drive through the same Google authorization flow
 - uploads PDFs or imports existing Drive month folders
 - supports selecting multiple PDFs at once and choosing which files belong in the accountant export
+- detects invoice attachments, links them to one primary document, and names them with `_att_01`, `_att_02`, and so on
 - blocks byte-identical duplicate PDFs before they are uploaded to Drive
 - manages a per-user vehicle list in Settings and includes the selected vehicle registration in expense filenames
 - extracts invoice metadata with deterministic parsing and optional LLM assistance
@@ -126,6 +127,7 @@ Back up the persistent data volume before replacing or migrating a deployment.
 - vehicle-expense filenames add the selected registration before `.pdf`
 - changing a vehicle in Settings affects future uploads while existing documents keep their stored registration
 - files excluded from accountant export remain available as internal references and are not bank-matched
+- supporting attachments do not store their own amount or payment type and do not consume invoice sequence numbers
 - cash invoices use the `cash` status and do not require a bank transaction match
 - accountant exports route files by document type into `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, and `OSTATNE`
 - the optional monthly statement is stored in `OSTATNE`

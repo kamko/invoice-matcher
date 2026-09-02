@@ -1,6 +1,7 @@
 """Tests for manually supplied invoice upload metadata."""
 
 import unittest
+from datetime import date
 from io import BytesIO
 from unittest.mock import Mock, patch
 
@@ -44,6 +45,8 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 vehicle_registration=None,
                 is_vehicle_expense=False,
                 include_in_export=True,
+                parent_invoice_id=None,
+                attachment_index=None,
                 gdrive_folder_id="root-folder",
                 skip_analyze=True,
                 user=user,
@@ -90,6 +93,8 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 vehicle_registration="BA123CD",
                 is_vehicle_expense=True,
                 include_in_export=True,
+                parent_invoice_id=None,
+                attachment_index=None,
                 gdrive_folder_id="root-folder",
                 skip_analyze=True,
                 user=user,
@@ -133,6 +138,8 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                 vehicle_registration="KE885HH",
                 is_vehicle_expense=True,
                 include_in_export=False,
+                parent_invoice_id=None,
+                attachment_index=None,
                 gdrive_folder_id="root-folder",
                 skip_analyze=True,
                 user=user,
@@ -179,6 +186,8 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
                     vehicle_registration=None,
                     is_vehicle_expense=False,
                     include_in_export=True,
+                    parent_invoice_id=None,
+                    attachment_index=None,
                     gdrive_folder_id="root-folder",
                     skip_analyze=True,
                     user=user,
@@ -189,5 +198,66 @@ class UploadInvoiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("existing.pdf", raised.exception.detail)
         service.find_or_create_subfolder.assert_not_called()
         service.upload_pdf.assert_not_called()
+        db.close()
+        engine.dispose()
+
+    async def test_attachment_uses_primary_filename_without_payment_or_amount(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        user = User(google_sub="attachment-test", email="attachment@example.com")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        primary = Invoice(
+            user_id=user.id,
+            filename="2026-08-31-001_wire_orlen-unipetrol-slovakia-sro.pdf",
+            vendor="ORLEN Unipetrol Slovakia, s.r.o.",
+            invoice_date=date(2026, 8, 31),
+            payment_type="wire",
+            amount="199.16",
+            include_in_export=True,
+            status="unmatched",
+        )
+        db.add(primary)
+        db.commit()
+        db.refresh(primary)
+
+        service = Mock()
+        service.find_or_create_subfolder.return_value = "month-folder"
+        service.upload_pdf.return_value = "attachment-file"
+        file = UploadFile(filename="detail.pdf", file=BytesIO(b"%PDF attachment"))
+
+        with patch("web.routers.invoices.get_gdrive_service_for_user", return_value=service):
+            result = await upload_invoice(
+                file=file,
+                vendor="Wrong standalone vendor",
+                invoice_date=None,
+                payment_type="card",
+                document_type="invoice",
+                amount="999.00",
+                currency="EUR",
+                comment=None,
+                vehicle_id=None,
+                vehicle_registration=None,
+                is_vehicle_expense=False,
+                include_in_export=True,
+                parent_invoice_id=primary.id,
+                attachment_index=1,
+                gdrive_folder_id="root-folder",
+                skip_analyze=True,
+                user=user,
+                db=db,
+            )
+
+        expected_name = "2026-08-31-001_wire_orlen-unipetrol-slovakia-sro_att_01.pdf"
+        self.assertEqual(result.filename, expected_name)
+        self.assertEqual(result.parent_invoice_id, primary.id)
+        self.assertEqual(result.attachment_index, 1)
+        self.assertIsNone(result.amount)
+        self.assertIsNone(result.payment_type)
+        self.assertFalse(result.include_in_export)
+        self.assertEqual(result.status, "reference")
+        self.assertEqual(service.upload_pdf.call_args.args[1], expected_name)
         db.close()
         engine.dispose()

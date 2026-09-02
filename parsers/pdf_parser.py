@@ -11,6 +11,31 @@ import pdfplumber
 from parsers.ekasa_parser import parse_ekasa_pdf
 
 
+def is_supporting_attachment(text: str, metadata: Optional[dict] = None) -> bool:
+    """Detect PDFs that explicitly identify themselves as invoice attachments."""
+    metadata = metadata or {}
+    metadata_text = "\n".join(
+        str(metadata.get(key) or "")
+        for key in ("Title", "Subject", "title", "subject")
+    )
+    haystack = f"{metadata_text}\n{text}".lower()
+    compact_metadata = re.sub(r"[^a-z]", "", metadata_text.lower())
+    markers = (
+        "invoice attachment",
+        "príloha k daňovému dokladu",
+        "priloha k danovemu dokladu",
+        "příloha k daňovému dokladu",
+        "příloha dd",
+        "príloha dd",
+        "priloha dd",
+        "nie je daňový doklad",
+        "nie je danovy doklad",
+    )
+    return "invoiceattachment" in compact_metadata or any(
+        marker in haystack for marker in markers
+    )
+
+
 def infer_document_type(
     text: str,
     filename: str,
@@ -340,6 +365,7 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
         'vs': None,
         'iban': None,
         'is_credit_note': False,
+        'is_attachment': False,
     }
 
     # 1. Try to parse date from filename FIRST
@@ -358,6 +384,18 @@ def parse_uploaded_pdf(pdf_path: Path) -> dict:
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
                 text += page_text + "\n"
+
+            if text.strip() and is_supporting_attachment(text, pdf.metadata):
+                result['is_attachment'] = True
+                result['document_type'] = 'other'
+                result['payment_type'] = None
+                if result['vendor'] is None:
+                    result['vendor'] = extract_vendor(text)
+                if result['invoice_date'] is None:
+                    attachment_date = extract_date(text)
+                    if attachment_date:
+                        result['invoice_date'] = attachment_date.date()
+                return result
 
             # If no text extracted (scanned image), try e-kasa QR parsing
             if not text.strip():
