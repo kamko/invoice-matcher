@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { Check, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip, ChevronDown, ChevronRight } from 'lucide-react'
+import { CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip, ChevronDown, ChevronRight } from 'lucide-react'
 
 interface UploadDraft {
   id: string
@@ -1027,9 +1027,6 @@ export function InvoicesPage() {
                                   title="Unmatch"
                                 >
                                   <Link2Off className="h-4 w-4" />
-                                </Button>
-                                <Button variant="outline" size="sm" disabled>
-                                  <Check className="h-4 w-4" />
                                 </Button>
                               </>
                             )}
