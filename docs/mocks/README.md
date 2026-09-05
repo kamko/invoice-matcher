@@ -4,7 +4,7 @@ These screenshots use fictional data in the actual frontend. Drive and Mailjet a
 
 ## Progressive export
 
-Only paired, unexported documents appear. Copying sends no email.
+Only paired, unexported documents appear. **Export N documents** immediately copies them without email. **Finish month & send email** directly exports the remainder and sends the completion email. There is no mode selector.
 
 ![Exportable](exportable.png)
 
@@ -16,7 +16,7 @@ Edit Invoice can mark a manual handoff without sending files or email.
 
 ## Final handoff
 
-The final email includes notes from the remaining documents and documents handed over earlier.
+Expand **Preview final email & notes** to review the message before finishing. The final email includes notes from the remaining documents and documents handed over earlier.
 
 ![Completion email](completion-email.png)
 

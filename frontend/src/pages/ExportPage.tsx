@@ -24,13 +24,12 @@ export function ExportPage() {
   const { data: appConfig } = useAppConfig()
   const copy = useCopyToGDrive()
   const [month, setMonth] = useState(new URLSearchParams(search).get('month') || '')
-  const [complete, setComplete] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
   const [includeStatement, setIncludeStatement] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [emailBody, setEmailBody] = useState('')
   const { data: documents, isLoading, isError } = useInvoices(month || undefined, 'exportable')
-  const { data: preview, isFetching: previewLoading, isError: previewError } = useAccountantEmailPreview(month || null, complete)
+  const { data: preview, isFetching: previewLoading, isError: previewError } = useAccountantEmailPreview(month || null, true)
   const { data: sender } = useMailjetSenderStatus(settings?.mailjet_sender_email || '', Boolean(appConfig?.mailjet_enabled))
   const busy = copy.isPending || downloading
   const ready = documents?.invoices.filter((invoice) => !invoice.parent_invoice_id) || []
@@ -39,8 +38,8 @@ export function ExportPage() {
 
   useEffect(() => {
     setEmailBody(preview?.body || '')
-  }, [preview?.body, month, complete])
-  useEffect(() => { setAcknowledged(false) }, [month, complete, unresolved])
+  }, [preview?.body, month])
+  useEffect(() => { setAcknowledged(false) }, [month, unresolved])
 
   const refresh = () => {
     for (const key of ['invoices', 'dashboard', 'month-stats', 'accountant-email-preview']) {
@@ -57,15 +56,15 @@ export function ExportPage() {
     throw new Error('Configure your Fio token in Settings to include the monthly statement')
   }
 
-  const handleCopy = async () => {
-    if (!month || !settings?.accountant_folder_id || !preview) return
+  const handleCopy = async (complete: boolean) => {
+    if (!month || !settings?.accountant_folder_id || (complete && !preview)) return
     try {
       const result = await copy.mutateAsync({
         yearMonth: month, folderId: settings.accountant_folder_id, markExported: true,
         includeMonthlyStatement: includeStatement,
         fioToken: includeStatement ? await resolveFioToken() : undefined,
-        sendSummaryEmail: preview.will_send_email,
-        emailBody: preview.will_send_email ? emailBody : undefined,
+        sendSummaryEmail: complete,
+        emailBody: complete ? emailBody : undefined,
         completeMonth: complete, acknowledgeUnmatched: acknowledged,
       })
       const summary = `${result.copied} copied, ${result.skipped} already on Drive.`
@@ -129,19 +128,14 @@ export function ExportPage() {
           </div>
         ) : <p className="text-sm text-muted-foreground">No paired documents waiting for export. Match payments to documents in <Link className="underline" href="/transactions">Transactions</Link>, or select another month.</p>}
         {month && <>
-          <div className="flex flex-wrap gap-2" aria-label="Handoff mode">
-            <Button variant={complete ? 'outline' : 'default'} disabled={busy} aria-pressed={!complete} onClick={() => setComplete(false)}>Progressive export</Button>
-            <Button variant={complete ? 'default' : 'outline'} disabled={busy} aria-pressed={complete} onClick={() => setComplete(true)}>Hand over the rest + confirm complete</Button>
-          </div>
-          <p className="text-sm">{complete ? 'Copies the remaining paired documents and confirms completion by email, including notes from all documents already handed over this month.' : 'Copies ready documents. No email is sent. All notes are summarized in the final email.'}</p>
-          {complete && unresolved > 0 && <div className="space-y-3 rounded-md border p-4">
+          {unresolved > 0 && <div className="space-y-3 rounded-md border p-4">
             <p role="alert" className="text-sm">{unresolved} expense payments in this payment month still have no document. <Link className="underline" href={`/transactions?month=${month}&status=unmatched&type=expense`}>Review payments</Link>.</p>
             <div className="flex items-start gap-2"><Checkbox id="ack-unmatched" checked={acknowledged} disabled={busy} onCheckedChange={(value) => setAcknowledged(value === true)} /><Label htmlFor="ack-unmatched" className="text-sm font-normal">I reviewed these payments and confirm the handoff is complete.</Label></div>
           </div>}
           <div className="flex items-center gap-2"><Checkbox id="include-statement" checked={includeStatement} disabled={busy} onCheckedChange={(value) => setIncludeStatement(value === true)} /><Label htmlFor="include-statement" className="text-sm font-normal">Include monthly Fio PDF statement on Drive</Label></div>
           {previewLoading ? <p role="status" className="text-sm">Preparing handoff…</p> : previewError ? <p role="alert" className="text-destructive">Could not prepare the handoff. Try again.</p> : preview && <>
-            {preview.will_send_email && <section className="space-y-3 border-t pt-4" aria-labelledby="email-title">
-              <h2 id="email-title" className="font-medium">Email preview</h2>
+            {preview.will_send_email && <details className="space-y-3 border-t pt-4">
+              <summary className="cursor-pointer font-medium">Preview final email & notes</summary>
               <dl className="grid gap-2 text-sm sm:grid-cols-[4rem_1fr]">
                 <dt>From</dt><dd className="break-all">{preview.sender_name} &lt;{preview.sender_email || 'not configured'}&gt;</dd>
                 <dt>To</dt><dd className="break-all">{preview.to || 'not configured'}</dd>
@@ -151,16 +145,25 @@ export function ExportPage() {
               <Label htmlFor="email-body">Message</Label>
               <textarea id="email-body" className="w-full rounded-md border bg-background p-3 text-sm" rows={7} maxLength={10000} value={emailBody} disabled={busy} onChange={(event) => setEmailBody(event.target.value)} />
               {!emailReady && <p className="text-sm text-destructive">Configure the company, accountant email and active Mailjet sender in Settings before sending this email.</p>}
-            </section>}
+            </details>}
           </>}
           {(!gdrive?.authenticated || !settings?.accountant_folder_id) && <p className="text-sm text-destructive">Connect Google Drive and select the accountant folder in Settings.</p>}
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={handleCopy} disabled={busy || isLoading || isError || previewLoading || previewError || !preview || !gdrive?.authenticated || !settings?.accountant_folder_id || (!complete && !ready.length) || (preview.will_send_email && (!emailReady || !emailBody.trim())) || (complete && unresolved > 0 && !acknowledged)}>
-              {copy.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : complete ? <Mail className="mr-2 h-4 w-4" /> : <Cloud className="mr-2 h-4 w-4" />}
-              {complete ? 'Hand over rest & confirm by email' : 'Copy to accountant'}
-            </Button>
-            <Button variant="outline" onClick={handleDownload} disabled={busy || isLoading || isError || !ready.length}><Download className="mr-2 h-4 w-4" />Download ZIP</Button>
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:gap-6">
+            <div className="space-y-2">
+              <Button onClick={() => handleCopy(false)} disabled={busy || isLoading || isError || !gdrive?.authenticated || !settings?.accountant_folder_id || !ready.length}>
+                {copy.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Cloud className="mr-2 h-4 w-4" />}
+                Export {ready.length} {ready.length === 1 ? 'document' : 'documents'}
+              </Button>
+              <p className="text-sm text-muted-foreground">Copies to your accountant. No email.</p>
+            </div>
+            <div className="space-y-2">
+              <Button variant="outline" onClick={() => handleCopy(true)} disabled={busy || isLoading || isError || previewLoading || previewError || !preview || !gdrive?.authenticated || !settings?.accountant_folder_id || !emailReady || !emailBody.trim() || (unresolved > 0 && !acknowledged)}>
+                <Mail className="mr-2 h-4 w-4" />Finish month & send email
+              </Button>
+              <p className="text-sm text-muted-foreground">Exports the rest and emails all notes for the month.</p>
+            </div>
           </div>
+          <Button variant="ghost" onClick={handleDownload} disabled={busy || isLoading || isError || !ready.length}><Download className="mr-2 h-4 w-4" />Download ZIP instead</Button>
           <p className="text-sm text-muted-foreground">Drive handoffs mark successful files as exported automatically. ZIP download leaves their status unchanged; use Edit Invoice to mark a manual handoff.</p>
         </>}
       </CardContent></Card>
