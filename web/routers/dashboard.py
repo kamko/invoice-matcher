@@ -18,10 +18,10 @@ from web.config import settings
 from web.database import get_db
 from web.database.models import Invoice, Transaction, PDFCache, User, UserSetting
 from web.routers.gdrive import get_gdrive_service_for_user
+from web.services.export_service import exportable_conditions, handoff_body
 from web.services.email_service import (
     DEFAULT_ACCOUNTANT_EMAIL_SUBJECT_TEMPLATE,
     DEFAULT_ACCOUNTANT_EMAIL_TEMPLATE,
-    build_accountant_email_body,
     build_accountant_email_subject,
     get_mailjet_sender_status,
     send_accountant_summary,
@@ -42,6 +42,8 @@ class CopyToAccountantRequest(BaseModel):
     include_monthly_statement: bool = False
     send_summary_email: bool = False
     email_body: Optional[str] = Field(default=None, max_length=10000)
+    complete_month: bool = False
+    acknowledge_unmatched: bool = False
 
 
 def _get_email_setting(db: Session, user_id: int, key: str, label: str) -> str:
@@ -139,13 +141,31 @@ def _get_exportable_invoices(
     start_date = datetime(year, month, 1).date()
     end_date = datetime(year, month, monthrange(year, month)[1]).date()
     return db.query(Invoice).filter(
-        Invoice.status.in_(['matched', 'cash']),
-        Invoice.include_in_export.is_(True),
+        *exportable_conditions(user_id),
         Invoice.invoice_date >= start_date,
         Invoice.invoice_date <= end_date,
         Invoice.gdrive_file_id.isnot(None),
         Invoice.user_id == user_id,
     ).all()
+
+
+def _unmatched_expenses(db, user_id, year_month):
+    return db.query(Transaction).filter(
+        Transaction.user_id == user_id,
+        Transaction.type == 'expense',
+        Transaction.status == 'unmatched',
+        func.strftime('%Y-%m', Transaction.date) == year_month,
+    ).count()
+
+
+def _handed_over_invoices(db, user_id, year_month):
+    return db.query(Invoice).filter(
+        Invoice.user_id == user_id,
+        Invoice.status == 'exported',
+        Invoice.include_in_export.is_(True),
+        Invoice.parent_invoice_id.is_(None),
+        func.strftime('%Y-%m', Invoice.invoice_date) == year_month,
+    ).order_by(Invoice.invoice_date, Invoice.id).all()
 
 
 def _normalize_document_type(value: Optional[str]) -> str:
@@ -168,12 +188,9 @@ def _get_or_create_accountant_subfolder(
     if target_subfolder_id is None:
         target_subfolder_id = gdrive_service.find_or_create_subfolder(root_folder_id, folder_name)
         target_folder_ids[folder_name] = target_subfolder_id
-        try:
-            existing_files_by_folder[folder_name] = set(
-                gdrive_service.list_files_in_folder(target_subfolder_id)
-            )
-        except Exception:
-            existing_files_by_folder[folder_name] = set()
+        existing_files_by_folder[folder_name] = set(
+            gdrive_service.list_files_in_folder(target_subfolder_id)
+        )
 
     return target_subfolder_id, existing_files_by_folder[folder_name]
 
@@ -212,9 +229,7 @@ def get_dashboard(
 
     # Ready to export (matched but not exported)
     ready_to_export = db.query(Invoice).filter(
-        Invoice.status == 'matched',
-        Invoice.include_in_export.is_(True),
-        Invoice.user_id == user.id,
+        *exportable_conditions(user.id),
     ).count()
 
     # Known transactions
@@ -267,28 +282,10 @@ def export_month(
     db: Session = Depends(get_db)
 ):
     """Download a ZIP of matched invoices for a month."""
-    # Parse month
-    try:
-        year, mon = map(int, year_month.split('-'))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM")
-
-    from calendar import monthrange
-    start_date = datetime(year, mon, 1).date()
-    last_day = monthrange(year, mon)[1]
-    end_date = datetime(year, mon, last_day).date()
-
-    # Get matched/cash invoices for this month
-    invoices = db.query(Invoice).filter(
-        Invoice.status.in_(['matched', 'exported', 'cash']),
-        Invoice.include_in_export.is_(True),
-        Invoice.invoice_date >= start_date,
-        Invoice.invoice_date <= end_date,
-        Invoice.user_id == user.id,
-    ).all()
-
+    year, mon = _parse_year_month(year_month)
+    invoices = _get_exportable_invoices(db, user.id, year, mon)
     if not invoices:
-        raise HTTPException(status_code=404, detail="No matched/cash invoices for this month")
+        raise HTTPException(status_code=404, detail="No paired, unexported documents for this month")
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -298,6 +295,7 @@ def export_month(
     except HTTPException:
         gdrive_service = None
 
+    successful_exports = []
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         for invoice in invoices:
             if not invoice.gdrive_file_id:
@@ -312,12 +310,14 @@ def export_month(
             if cache:
                 cache.last_accessed_at = datetime.utcnow()
                 zf.writestr(invoice.filename, cache.content)
+                successful_exports.append(invoice)
             else:
                 # Try to download from GDrive
                 try:
                     if gdrive_service:
                         content = gdrive_service.download_file(invoice.gdrive_file_id)
                         zf.writestr(invoice.filename, content)
+                        successful_exports.append(invoice)
 
                         # Cache it
                         cache_entry = PDFCache(
@@ -334,8 +334,10 @@ def export_month(
                     print(f"Error downloading {invoice.filename}: {e}")
                     continue
 
+    if not successful_exports:
+        raise HTTPException(status_code=502, detail="No PDFs could be downloaded; nothing was marked exported")
     if mark_exported:
-        for invoice in invoices:
+        for invoice in successful_exports:
             invoice.status = 'exported'
         db.commit()
     else:
@@ -482,10 +484,12 @@ def get_accountant_email_preview(
     year_month: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    complete_month: bool = False,
 ):
     """Preview the exact accountant email body for the selected export month."""
     year, mon = _parse_year_month(year_month)
     invoices = _get_exportable_invoices(db, user.id, year, mon)
+    email_invoices = [*_handed_over_invoices(db, user.id, year_month), *invoices]
     template = _get_setting_value(
         db,
         user.id,
@@ -521,17 +525,13 @@ def get_accountant_email_preview(
         "sender_email": _get_setting_value(db, user.id, "mailjet_sender_email"),
         "to": _get_setting_value(db, user.id, "accountant_email"),
         "bcc": user.email,
-        "body": build_accountant_email_body(
-            year,
-            mon,
-            invoices,
-            template,
-            company_name,
-        ),
+        "body": handoff_body(year, mon, email_invoices, template, company_name),
         "comment_count": sum(
-            1 for invoice in invoices if invoice.comment and invoice.comment.strip()
+            1 for invoice in email_invoices if invoice.comment and invoice.comment.strip()
         ),
         "invoice_count": len(invoices),
+        "will_send_email": complete_month,
+        "unmatched_expenses": _unmatched_expenses(db, user.id, year_month),
     }
 
 
@@ -539,7 +539,7 @@ def get_accountant_email_preview(
 def copy_to_accountant_folder(
     year_month: str,
     folder_id: str = Query(..., description="Target GDrive folder ID"),
-    mark_exported: bool = Query(False, description="Mark invoices as exported"),
+    mark_exported: bool = Query(True, description="Drive handoffs always mark successful files as exported"),
     payload: Optional[CopyToAccountantRequest] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -548,7 +548,22 @@ def copy_to_accountant_folder(
     gdrive_service = get_gdrive_service_for_user(db, user)
     fio_token = (payload.fio_token or "").strip() if payload else ""
     include_monthly_statement = payload.include_monthly_statement if payload else False
-    send_summary_email = payload.send_summary_email if payload else False
+    year, mon = _parse_year_month(year_month)
+    complete_month = payload.complete_month if payload else False
+    invoices = _get_exportable_invoices(db, user.id, year, mon)
+    if complete_month and _unmatched_expenses(db, user.id, year_month) and not (payload and payload.acknowledge_unmatched):
+        raise HTTPException(status_code=409, detail="Review and acknowledge the payments without documents before confirming completion")
+    missing_pdfs = db.query(Invoice).filter(
+        Invoice.user_id == user.id,
+        Invoice.status == 'matched',
+        Invoice.include_in_export.is_(True),
+        Invoice.transaction_id.isnot(None),
+        Invoice.gdrive_file_id.is_(None),
+        func.strftime('%Y-%m', Invoice.invoice_date) == year_month,
+    ).count()
+    if complete_month and missing_pdfs:
+        raise HTTPException(status_code=409, detail="Some paired documents have no PDF. Add their files before confirming completion")
+    send_summary_email = complete_month
     email_body_override = payload.email_body if payload else None
     if (
         send_summary_email
@@ -613,8 +628,8 @@ def copy_to_accountant_folder(
         )
     invoices = _get_exportable_invoices(db, user.id, year, mon)
 
-    if not invoices:
-        raise HTTPException(status_code=404, detail="No matched/cash invoices to export for this month")
+    if not invoices and not complete_month:
+        raise HTTPException(status_code=404, detail="No paired, unexported documents for this month")
 
     copied = 0
     skipped = 0
@@ -688,15 +703,15 @@ def copy_to_accountant_folder(
             statement_status = "failed"
             errors.append(f"{statement_filename}: {str(e)}")
 
-    if mark_exported:
-        for invoice in successful_exports:
-            invoice.status = 'exported'
-        db.commit()
+    for invoice in successful_exports:
+        invoice.status = 'exported'
+    db.commit()
+    email_invoices = _handed_over_invoices(db, user.id, year_month)
 
     if send_summary_email:
-        if not successful_exports:
+        if complete_month and errors:
             email_result["status"] = "failed"
-            email_result["error"] = "No invoices were successfully exported"
+            email_result["error"] = "Completion email withheld because some files failed to export"
         else:
             try:
                 message_id = send_accountant_summary(
@@ -707,9 +722,12 @@ def copy_to_accountant_folder(
                     accountant_email_subject_template,
                     year,
                     mon,
-                    successful_exports,
+                    email_invoices,
                     accountant_email_template,
-                    body_override=email_body_override,
+                    body_override=(
+                        handoff_body(year, mon, email_invoices, accountant_email_template, company_name)
+                        if errors or email_body_override is None else email_body_override
+                    ),
                     bcc_email=user.email,
                 )
                 email_result["status"] = "sent"
@@ -719,7 +737,7 @@ def copy_to_accountant_folder(
                 email_result["error"] = str(exc)
 
     return {
-        "success": True,
+        "success": not errors and email_result["status"] != "failed",
         "copied": copied,
         "skipped": skipped,
         "total": len(invoices),

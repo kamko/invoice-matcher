@@ -18,6 +18,9 @@ Private web app for collecting invoices, reconciling them with bank transactions
 - exports a month as a ZIP or copies documents into an accountant Drive folder
 - optionally adds the monthly bank statement to the accountant export
 - previews and sends a summary email through Mailjet, including document comments and a BCC to the signed-in user
+- provides an Exportable tab for progressive Drive handoffs of documents paired with bank payments; progressive handoffs never send email
+- supports manually marking documents as exported in Edit Invoice without copying files or changing their payment match
+- sends the final completion email with notes from all handed-over documents in the selected month, including earlier and manual handoffs
 - supports editable organization name, email subject template, message template, sender identity, and accountant recipient in Settings
 
 ## Stack
@@ -131,6 +134,11 @@ Back up the persistent data volume before replacing or migrating a deployment.
 - cash invoices use the `cash` status and do not require a bank transaction match
 - accountant exports route files by document type into `POKLADNICNE_DOKLADY`, `DOSLE_FAKTURY`, and `OSTATNE`
 - the optional monthly statement is stored in `OSTATNE`
+- accountant handoffs include only unexported documents with a matched bank payment; cash and unpaired documents are excluded
+- successful Drive copies (including files already present by name) are automatically marked exported
+- ZIP downloads include only the remaining paired documents; the UI leaves their status unchanged for manual handoff
+- final handoff asks you to review unresolved expense payments and withholds completion email if a file or requested statement fails
+- if the final email fails, retry final handoff: already exported PDFs are omitted and their notes remain in the email
 - email preview shows From, To, BCC, subject, and the editable per-send message body
 - editing the preview body does not overwrite the saved message template
 

@@ -237,14 +237,15 @@ class MatchingService:
         if not invoice.include_in_export:
             raise ValueError("Internal reference files cannot be matched")
 
-        if invoice.status == 'matched':
+        if invoice.transaction_id:
             raise ValueError("Invoice already matched")
         if transaction.status == 'matched':
             raise ValueError("Transaction already matched")
 
         # Create the match
         invoice.transaction_id = transaction_id
-        invoice.status = 'matched'
+        if invoice.status != 'exported':
+            invoice.status = 'matched'
         transaction.status = 'matched'
 
         # Learn vendor alias for future
@@ -262,7 +263,7 @@ class MatchingService:
         if not invoice:
             raise ValueError(f"Invoice {invoice_id} not found")
 
-        if invoice.status != 'matched' or not invoice.transaction_id:
+        if not invoice.transaction_id:
             raise ValueError("Invoice is not matched")
 
         # Find and update transaction
@@ -271,7 +272,8 @@ class MatchingService:
         ).first()
 
         invoice.transaction_id = None
-        invoice.status = 'unmatched'
+        if invoice.status != 'exported':
+            invoice.status = 'unmatched'
 
         if transaction:
             transaction.status = 'unmatched'

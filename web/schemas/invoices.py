@@ -51,6 +51,7 @@ class InvoiceUpdate(BaseModel):
     include_in_export: Optional[bool] = None
     is_credit_note: Optional[bool] = None
     status: Optional[str] = None
+    exported: Optional[bool] = None
 
 
 class InvoiceResponse(InvoiceBase):

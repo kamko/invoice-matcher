@@ -301,7 +301,7 @@ export function useMonthlySummary() {
 export function useCopyToGDrive() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement, sendSummaryEmail, emailBody }: {
+    mutationFn: ({ yearMonth, folderId, markExported, fioToken, includeMonthlyStatement, sendSummaryEmail, emailBody, completeMonth, acknowledgeUnmatched }: {
       yearMonth: string
       folderId: string
       markExported: boolean
@@ -309,6 +309,8 @@ export function useCopyToGDrive() {
       includeMonthlyStatement: boolean
       sendSummaryEmail: boolean
       emailBody?: string
+      completeMonth?: boolean
+      acknowledgeUnmatched?: boolean
     }) =>
       fetchJson<{
         success: boolean
@@ -327,12 +329,16 @@ export function useCopyToGDrive() {
             include_monthly_statement: includeMonthlyStatement,
             send_summary_email: sendSummaryEmail,
             email_body: emailBody,
+            complete_month: completeMonth || false,
+            acknowledge_unmatched: acknowledgeUnmatched || false,
           }),
         }
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['month-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['accountant-email-preview'] })
     },
   })
 }
@@ -346,12 +352,14 @@ export interface AccountantEmailPreview {
   body: string
   comment_count: number
   invoice_count: number
+  will_send_email: boolean
+  unmatched_expenses: number
 }
 
-export function useAccountantEmailPreview(yearMonth: string | null) {
+export function useAccountantEmailPreview(yearMonth: string | null, completeMonth = false) {
   return useQuery({
-    queryKey: ['accountant-email-preview', yearMonth],
-    queryFn: () => fetchJson<AccountantEmailPreview>(`/export/${yearMonth}/email-preview`),
+    queryKey: ['accountant-email-preview', yearMonth, completeMonth],
+    queryFn: () => fetchJson<AccountantEmailPreview>(`/export/${yearMonth}/email-preview?complete_month=${completeMonth}`),
     enabled: Boolean(yearMonth),
   })
 }
@@ -498,6 +506,7 @@ export function useUpdateInvoice() {
       vehicle_registration?: string
       is_vehicle_expense?: boolean
       include_in_export?: boolean
+      exported?: boolean
     }) =>
       fetchJson<Invoice>(`/invoices/${invoiceId}`, {
         method: 'PATCH',
@@ -505,6 +514,9 @@ export function useUpdateInvoice() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['month-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['accountant-email-preview'] })
     },
   })
 }
