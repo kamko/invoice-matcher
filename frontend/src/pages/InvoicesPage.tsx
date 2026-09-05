@@ -117,6 +117,7 @@ export function InvoicesPage() {
   const [editVehicleId, setEditVehicleId] = useState<number | null>(null)
   const [editVehicleRegistration, setEditVehicleRegistration] = useState('')
   const [editIsVehicleExpense, setEditIsVehicleExpense] = useState(false)
+  const [editExported, setEditExported] = useState(false)
   const [editIncludeInExport, setEditIncludeInExport] = useState(true)
   // Track parsed/suggested values from reanalyze
   const [parsedValues, setParsedValues] = useState<{
@@ -570,7 +571,13 @@ export function InvoicesPage() {
   }
 
   // Compute preview filename based on current edit values
-  const previewFilename = selectedInvoice && editDate && editPaymentType
+  const namingChanged = selectedInvoice && (
+    editDate !== (selectedInvoice.invoice_date || '')
+    || editPaymentType !== (selectedInvoice.payment_type || 'card')
+    || editVendor !== (selectedInvoice.vendor || '')
+    || editVehicleRegistration !== (selectedInvoice.vehicle_registration || '')
+  )
+  const previewFilename = namingChanged && selectedInvoice && editDate && editPaymentType
     ? generateFilename(
         editDate,
         editPaymentType,
@@ -600,6 +607,7 @@ export function InvoicesPage() {
     setEditVehicleRegistration(inv.vehicle_registration || '')
     setEditIsVehicleExpense(inv.is_vehicle_expense || false)
     setEditIncludeInExport(inv.include_in_export)
+    setEditExported(inv.status === 'exported')
     setParsedValues(null) // Reset parsed values
     setShowEditModal(true)
   }
@@ -612,7 +620,7 @@ export function InvoicesPage() {
       showApiError(new Error('Select a vehicle'), 'Update invoice')
       return
     }
-    if (selectedInvoice.status === 'matched' && !editIncludeInExport) {
+    if (selectedInvoice.transaction_id && !editIncludeInExport) {
       showApiError(
         new Error('Unmatch this document before excluding it from accountant export'),
         'Update invoice'
@@ -660,6 +668,7 @@ export function InvoicesPage() {
         vehicle_registration: normalizedRegistration,
         is_vehicle_expense: editIsVehicleExpense,
         include_in_export: editIncludeInExport,
+        exported: editExported !== (selectedInvoice.status === 'exported') ? editExported : undefined,
       })
       showSuccess(filenameChanged ? 'Invoice updated & renamed' : 'Invoice updated')
       setShowEditModal(false)
@@ -716,6 +725,7 @@ export function InvoicesPage() {
     { value: '', label: 'All statuses' },
     { value: 'unmatched', label: 'Unmatched' },
     { value: 'matched', label: 'Matched' },
+    { value: 'exportable', label: 'Exportable' },
     { value: 'exported', label: 'Exported' },
     { value: 'cash', label: 'Cash' },
     { value: 'reference', label: 'Internal only' },
@@ -1722,6 +1732,23 @@ export function InvoicesPage() {
                 </div>
               </div>
             )}
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-export-status">Export status</Label>
+              <Select
+                id="edit-export-status"
+                value={editExported ? 'exported' : 'not-exported'}
+                onChange={(event) => setEditExported(event.target.value === 'exported')}
+                options={[
+                  { value: 'not-exported', label: 'Not exported' },
+                  { value: 'exported', label: 'Exported' },
+                ]}
+              />
+              <p className="text-sm text-muted-foreground">
+                Mark documents handed over manually. This does not copy files or send email.
+                Changing this status keeps the payment match.
+              </p>
+            </div>
 
             <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
               <label className="flex cursor-pointer items-start gap-2">

@@ -72,7 +72,7 @@ function AppContent() {
                 <NavLink href="/">Dashboard</NavLink>
                 <NavLink href="/transactions">Transactions</NavLink>
                 <NavLink href="/invoices">Invoices</NavLink>
-                <NavLink href="/export">Export</NavLink>
+                <NavLink href="/exportable">Exportable</NavLink>
                 <NavLink href="/rules">Rules</NavLink>
                 <NavLink href="/settings">Settings</NavLink>
               </nav>
@@ -108,7 +108,7 @@ function AppContent() {
               <NavLink href="/" mobile onNavigate={() => setMobileNavOpen(false)}>Dashboard</NavLink>
               <NavLink href="/transactions" mobile onNavigate={() => setMobileNavOpen(false)}>Transactions</NavLink>
               <NavLink href="/invoices" mobile onNavigate={() => setMobileNavOpen(false)}>Invoices</NavLink>
-              <NavLink href="/export" mobile onNavigate={() => setMobileNavOpen(false)}>Export</NavLink>
+              <NavLink href="/exportable" mobile onNavigate={() => setMobileNavOpen(false)}>Exportable</NavLink>
               <NavLink href="/rules" mobile onNavigate={() => setMobileNavOpen(false)}>Rules</NavLink>
               <NavLink href="/settings" mobile onNavigate={() => setMobileNavOpen(false)}>Settings</NavLink>
             </nav>
@@ -131,6 +131,7 @@ function AppContent() {
           <Route path="/transactions" component={TransactionsPage} />
           <Route path="/invoices" component={InvoicesPage} />
           <Route path="/export" component={ExportPage} />
+          <Route path="/exportable" component={ExportPage} />
           <Route path="/rules" component={RulesPage} />
           <Route path="/settings" component={SettingsPage} />
           <Route>

@@ -27,6 +27,7 @@ from web.schemas.invoices import (
 )
 from web.services.matching_service import MatchingService
 from web.services.vehicle_service import normalize_vehicle_registration
+from web.services.export_service import exportable_conditions
 from web.routers.sse import send_progress, send_info, send_error, send_success
 from parsers.pdf_parser import parse_uploaded_pdf
 
@@ -108,7 +109,9 @@ def list_invoices(
             Invoice.invoice_date <= end_date
         )
 
-    if status:
+    if status == 'exportable':
+        query = query.filter(*exportable_conditions(user.id))
+    elif status:
         query = query.filter(Invoice.status == status)
 
     if document_type:
@@ -616,6 +619,7 @@ def update_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     update_data = update.model_dump(exclude_unset=True)
+    exported = update_data.pop("exported", None)
     if "document_type" in update_data:
         update_data["document_type"] = _normalize_document_type(update_data["document_type"])
     if "vehicle_id" in update_data:
@@ -674,6 +678,18 @@ def update_invoice(
             update_data["status"] = "unmatched"
         elif not update_data["include_in_export"]:
             update_data["status"] = "reference"
+    if exported is not None:
+        if exported:
+            if not update_data.get("include_in_export", invoice.include_in_export):
+                raise HTTPException(status_code=400, detail="Internal reference files cannot be marked as exported")
+            update_data["status"] = "exported"
+        elif invoice.status == "exported":
+            update_data["status"] = (
+                "reference" if not update_data.get("include_in_export", invoice.include_in_export)
+                else "matched" if invoice.transaction_id
+                else "cash" if update_data.get("payment_type", invoice.payment_type) == "cash"
+                else "unmatched"
+            )
     for field, value in update_data.items():
         setattr(invoice, field, value)
 
