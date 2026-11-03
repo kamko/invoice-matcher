@@ -67,7 +67,7 @@ export function ExportPage() {
         emailBody: complete ? emailBody : undefined,
         completeMonth: complete, acknowledgeUnmatched: acknowledged,
       })
-      const summary = `${result.copied} copied, ${result.skipped} already on Drive.`
+      const summary = `${result.copied} copied, ${result.replaced ?? 0} replaced${result.skipped ? `, ${result.skipped} already on Drive` : ''}.`
       if (result.errors.length || result.email.status === 'failed') {
         showApiError(new Error([summary, ...result.errors, result.email.error].filter(Boolean).join(' ')), 'Handoff incomplete')
       } else {

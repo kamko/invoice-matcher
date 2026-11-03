@@ -632,6 +632,7 @@ def copy_to_accountant_folder(
         raise HTTPException(status_code=404, detail="No paired, unexported documents for this month")
 
     copied = 0
+    replaced = 0
     skipped = 0
     errors = []
     successful_exports = []
@@ -671,13 +672,14 @@ def copy_to_accountant_folder(
                     raise ValueError("Cannot identify a unique existing PDF to replace")
                 content = gdrive_service.download_file(invoice.gdrive_file_id)
                 gdrive_service.replace_pdf(candidates[0]['id'], content)
+                replaced += 1
             else:
                 gdrive_service.copy_file(
                     invoice.gdrive_file_id,
                     target_subfolder_id,
                     invoice.filename  # Keep same filename
                 )
-            copied += 1
+                copied += 1
             existing_files.add(invoice.filename)
             successful_exports.append(invoice)
         except Exception as e:
@@ -744,6 +746,7 @@ def copy_to_accountant_folder(
     return {
         "success": not errors and email_result["status"] != "failed",
         "copied": copied,
+        "replaced": replaced,
         "skipped": skipped,
         "total": len(invoices),
         "errors": errors,

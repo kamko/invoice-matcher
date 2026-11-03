@@ -224,7 +224,8 @@ class HandoffTests(unittest.TestCase):
         self.drive.list_pdfs.return_value = [{'id': 'accountant-copy', 'name': invoice.filename}]
         self.drive.download_file.return_value = content
         result = self.handoff()
-        self.assertEqual(result['copied'], 1)
+        self.assertEqual(result['copied'], 0)
+        self.assertEqual(result['replaced'], 1)
         self.assertEqual(invoice.status, 'exported')
         self.drive.replace_pdf.assert_called_with('accountant-copy', content)
         self.drive.copy_file.assert_not_called()
@@ -237,6 +238,7 @@ class HandoffTests(unittest.TestCase):
         result = self.handoff()
         self.assertEqual(result['copied'], 0)
         self.assertTrue(result['errors'])
+        self.assertEqual(result['replaced'], 0)
         self.assertEqual(invoice.status, 'matched')
 
 

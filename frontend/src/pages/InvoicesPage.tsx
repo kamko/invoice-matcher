@@ -22,6 +22,7 @@ import {
   MatchSuggestion,
 } from '../api/client'
 import { InvoicePdfPreview } from '../components/InvoicePdfPreview'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../components/ui/dropdown-menu'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -43,7 +44,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '../components/ui/dialog'
-import { CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip, ChevronDown, ChevronRight } from 'lucide-react'
+import { MoreHorizontal, CreditCard, Upload, Trash2, Link2Off, Pencil, RefreshCw, MessageSquareText, FileText, X, Car, Archive, Paperclip, ChevronDown, ChevronRight } from 'lucide-react'
 
 interface UploadDraft {
   id: string
@@ -987,73 +988,37 @@ export function InvoicesPage() {
                         </TableCell>
                         <TableCell>{getStatusBadge(inv.status)}</TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openEditModal(inv)}
-                              title="Edit"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            {inv.gdrive_file_id && (
-                              <Button variant="outline" size="sm" title="Replace PDF" aria-label="Replace PDF"
-                                onClick={() => { setReplacementInvoice(inv); setReplacementFile(null) }}>
-                                <Upload className="h-4 w-4" />
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="outline" size="sm" aria-label={`Actions for ${inv.filename}`}>
+                                <MoreHorizontal className="h-4 w-4" />
                               </Button>
-                            )}
-                            {inv.status === 'unmatched' && inv.include_in_export && (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedInvoice(inv)
-                                    setShowMatchModal(true)
-                                  }}
-                                  title="Match to transaction"
-                                >
-                                  <CreditCard className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedInvoice(inv)
-                                    setShowDeleteModal(true)
-                                  }}
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
-                            {inv.status === 'matched' && (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleUnmatch(inv)}
-                                  title="Unmatch"
-                                >
-                                  <Link2Off className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
-                            {inv.status !== 'unmatched' && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedInvoice(inv)
-                                  setShowDeleteModal(true)
-                                }}
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => openEditModal(inv)}>
+                                <Pencil className="mr-2 h-4 w-4" /> Edit
+                              </DropdownMenuItem>
+                              {inv.gdrive_file_id && (
+                                <DropdownMenuItem onSelect={() => { setReplacementInvoice(inv); setReplacementFile(null) }}>
+                                  <Upload className="mr-2 h-4 w-4" /> Replace PDF
+                                </DropdownMenuItem>
+                              )}
+                              {inv.status === 'unmatched' && inv.include_in_export && (
+                                <DropdownMenuItem onSelect={() => { setSelectedInvoice(inv); setShowMatchModal(true) }}>
+                                  <CreditCard className="mr-2 h-4 w-4" /> Match to transaction
+                                </DropdownMenuItem>
+                              )}
+                              {inv.status === 'matched' && (
+                                <DropdownMenuItem onSelect={() => handleUnmatch(inv)}>
+                                  <Link2Off className="mr-2 h-4 w-4" /> Unmatch
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive" onSelect={() => { setSelectedInvoice(inv); setShowDeleteModal(true) }}>
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                       {isExpanded && attachments.map((attachment) => renderAttachmentRow(attachment, true))}
@@ -1506,9 +1471,9 @@ export function InvoicesPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Replace PDF</DialogTitle></DialogHeader>
           <p className="text-sm break-all">{replacementInvoice?.filename}</p>
-          <p className="text-sm text-muted-foreground">The PDF in Google Drive will be replaced. Invoice details, filename and transaction match will stay the same.</p>
+          <p className="text-sm text-muted-foreground">The PDF in Google Drive will be replaced and re-analyzed. Review the extracted suggestions in Edit before saving. The filename and transaction match will stay the same.</p>
           {replacementInvoice?.status === 'exported' && (
-            <p className="text-sm text-muted-foreground">Existing exports keep the old PDF. In Edit, re-analyze if needed and set Export status to Not exported, then export again to update the accountant copy.</p>
+            <p className="text-sm text-muted-foreground">Existing exports keep the old PDF. In Edit, review the suggestions and set Export status to Not exported, then export again to update the accountant copy.</p>
           )}
           <Label htmlFor="replacement-pdf">New PDF</Label>
           <Input id="replacement-pdf" type="file" accept=".pdf,application/pdf" disabled={replacePdf.isPending}
@@ -1518,10 +1483,18 @@ export function InvoicesPage() {
             <Button disabled={!replacementFile || replacePdf.isPending} onClick={async () => {
               if (!replacementInvoice || !replacementFile) return
               try {
-                await replacePdf.mutateAsync({ invoiceId: replacementInvoice.id, file: replacementFile })
-                showSuccess('PDF replaced')
+                const updated = await replacePdf.mutateAsync({ invoiceId: replacementInvoice.id, file: replacementFile })
+                showSuccess('PDF replaced — analyzing the new document')
                 setReplacementInvoice(null)
                 setReplacementFile(null)
+                openEditModal(updated)
+                try {
+                  const result = await reanalyzeInvoice.mutateAsync(updated.id)
+                  setParsedValues(result.extracted || {})
+                  showSuccess('New PDF analyzed — review and apply the suggestions')
+                } catch (error) {
+                  showApiError(error, 'PDF replaced, but analysis failed. Use Re-analyze PDF to retry')
+                }
               } catch (error) { showApiError(error, 'Replace PDF') }
             }}>{replacePdf.isPending ? 'Replacing...' : 'Replace PDF'}</Button>
           </DialogFooter>
@@ -1563,7 +1536,7 @@ export function InvoicesPage() {
       </Dialog>
 
       {/* Edit Invoice Modal */}
-      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+      <Dialog open={showEditModal} onOpenChange={(open) => { if (!reanalyzeInvoice.isPending) setShowEditModal(open) }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Invoice</DialogTitle>
@@ -1876,11 +1849,12 @@ export function InvoicesPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditModal(false)}>
+            <Button variant="outline" disabled={reanalyzeInvoice.isPending} onClick={() => setShowEditModal(false)}>
               Cancel
             </Button>
             <Button
               onClick={handleEdit}
+              disabled={reanalyzeInvoice.isPending}
               className={previewFilename !== selectedInvoice?.filename ? 'ring-2 ring-blue-500' : ''}
             >
               {previewFilename !== selectedInvoice?.filename ? 'Save & Rename' : 'Save'}
