@@ -556,6 +556,16 @@ class GDriveService:
 
         return file.get("id")
 
+    def replace_pdf(self, file_id: str, content: bytes) -> None:
+        """Update file content in place, preserving its name, folder and links."""
+        if not GDRIVE_AVAILABLE or not self._credentials:
+            raise RuntimeError("Not authenticated with Google Drive")
+        service = build("drive", "v3", credentials=self._credentials)
+        media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/pdf", resumable=True)
+        service.files().update(
+            fileId=file_id, media_body=media, supportsAllDrives=True,
+        ).execute()
+
     def rename_file(self, file_id: str, new_name: str) -> bool:
         """Rename a file in Google Drive.
 

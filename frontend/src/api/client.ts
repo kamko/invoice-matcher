@@ -521,6 +521,25 @@ export function useUpdateInvoice() {
   })
 }
 
+export function useReplaceInvoicePdf() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ invoiceId, file }: { invoiceId: number; file: File }) => {
+      const body = new FormData()
+      body.append('file', file)
+      const response = await authFetch(`/invoices/${invoiceId}/pdf`, { method: 'PUT', body })
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to replace PDF')
+      }
+      return response.json() as Promise<Invoice>
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] })
+    },
+  })
+}
+
 export function useDeleteInvoice() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -529,6 +548,7 @@ export function useDeleteInvoice() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
     },
   })
 }

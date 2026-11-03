@@ -7,6 +7,7 @@ import {
   useMatchInvoice,
   useUnmatchInvoice,
   useDeleteInvoice,
+  useReplaceInvoicePdf,
   useUploadInvoice,
   useUpdateInvoice,
   useReanalyzeInvoice,
@@ -20,6 +21,7 @@ import {
   Invoice,
   MatchSuggestion,
 } from '../api/client'
+import { InvoicePdfPreview } from '../components/InvoicePdfPreview'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -97,6 +99,10 @@ export function InvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [showMatchModal, setShowMatchModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null)
+  const [replacementInvoice, setReplacementInvoice] = useState<Invoice | null>(null)
+  const [replacementFile, setReplacementFile] = useState<File | null>(null)
+  const replacePdf = useReplaceInvoicePdf()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<number>>(new Set())
@@ -798,14 +804,13 @@ export function InvoicesPage() {
           <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             {attachment.gdrive_file_id ? (
-              <a
-                href={`/api/invoices/${attachment.id}/pdf`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
+                onClick={() => setPreviewInvoice(attachment)}
                 className="font-medium text-blue-600 hover:underline"
               >
                 Open attachment {String(attachment.attachment_index || 1).padStart(2, '0')}
-              </a>
+              </button>
             ) : (
               <span className="font-medium">
                 Attachment {String(attachment.attachment_index || 1).padStart(2, '0')}
@@ -923,14 +928,13 @@ export function InvoicesPage() {
                           <div className="flex max-w-xs items-center gap-2">
                             <div className="truncate" title={inv.filename}>
                             {inv.gdrive_file_id ? (
-                              <a
-                                href={`/api/invoices/${inv.id}/pdf`}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => setPreviewInvoice(inv)}
                                 className="text-blue-600 hover:underline"
                               >
                                 {inv.filename}
-                              </a>
+                              </button>
                             ) : (
                               inv.filename
                             )}
@@ -992,6 +996,12 @@ export function InvoicesPage() {
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
+                            {inv.gdrive_file_id && (
+                              <Button variant="outline" size="sm" title="Replace PDF" aria-label="Replace PDF"
+                                onClick={() => { setReplacementInvoice(inv); setReplacementFile(null) }}>
+                                <Upload className="h-4 w-4" />
+                              </Button>
+                            )}
                             {inv.status === 'unmatched' && inv.include_in_export && (
                               <>
                                 <Button
@@ -1030,7 +1040,7 @@ export function InvoicesPage() {
                                 </Button>
                               </>
                             )}
-                            {inv.status === 'reference' && (
+                            {inv.status !== 'unmatched' && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1488,6 +1498,36 @@ export function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
+      {previewInvoice && <InvoicePdfPreview key={previewInvoice.id} invoice={previewInvoice} onClose={() => setPreviewInvoice(null)} />}
+
+      <Dialog open={Boolean(replacementInvoice)} onOpenChange={(open) => {
+        if (!open && !replacePdf.isPending) setReplacementInvoice(null)
+      }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Replace PDF</DialogTitle></DialogHeader>
+          <p className="text-sm break-all">{replacementInvoice?.filename}</p>
+          <p className="text-sm text-muted-foreground">The PDF in Google Drive will be replaced. Invoice details, filename and transaction match will stay the same.</p>
+          {replacementInvoice?.status === 'exported' && (
+            <p className="text-sm text-muted-foreground">Existing exports will keep the old PDF. Export again to share the replacement.</p>
+          )}
+          <Label htmlFor="replacement-pdf">New PDF</Label>
+          <Input id="replacement-pdf" type="file" accept=".pdf,application/pdf" disabled={replacePdf.isPending}
+            onChange={(event) => setReplacementFile(event.target.files?.[0] || null)} />
+          <DialogFooter>
+            <Button variant="outline" disabled={replacePdf.isPending} onClick={() => setReplacementInvoice(null)}>Cancel</Button>
+            <Button disabled={!replacementFile || replacePdf.isPending} onClick={async () => {
+              if (!replacementInvoice || !replacementFile) return
+              try {
+                await replacePdf.mutateAsync({ invoiceId: replacementInvoice.id, file: replacementFile })
+                showSuccess('PDF replaced')
+                setReplacementInvoice(null)
+                setReplacementFile(null)
+              } catch (error) { showApiError(error, 'Replace PDF') }
+            }}>{replacePdf.isPending ? 'Replacing...' : 'Replace PDF'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Confirmation Modal */}
       <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
         <DialogContent>
@@ -1501,6 +1541,10 @@ export function InvoicesPage() {
                 ? `This will also delete ${selectedInvoiceAttachmentCount} linked ${selectedInvoiceAttachmentCount === 1 ? 'attachment' : 'attachments'}.`
                 : 'Are you sure you want to delete this invoice?'}
           </p>
+          <p className="text-sm text-muted-foreground">The source PDF will be deleted from Google Drive and its transaction match removed.</p>
+          {selectedInvoice?.status === 'exported' && (
+            <p className="text-sm text-muted-foreground">Already downloaded or sent exports will still contain this invoice.</p>
+          )}
           {selectedInvoice && (
             <div className="p-4 bg-muted rounded-lg text-sm">
               <div className="font-medium">{selectedInvoice.filename}</div>
@@ -1511,7 +1555,7 @@ export function InvoicesPage() {
             <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDelete}>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleteInvoice.isPending}>
               Delete
             </Button>
           </DialogFooter>
