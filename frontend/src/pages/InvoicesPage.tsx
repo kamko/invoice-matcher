@@ -1508,7 +1508,7 @@ export function InvoicesPage() {
           <p className="text-sm break-all">{replacementInvoice?.filename}</p>
           <p className="text-sm text-muted-foreground">The PDF in Google Drive will be replaced. Invoice details, filename and transaction match will stay the same.</p>
           {replacementInvoice?.status === 'exported' && (
-            <p className="text-sm text-muted-foreground">Existing exports will keep the old PDF. Export again to share the replacement.</p>
+            <p className="text-sm text-muted-foreground">Existing exports keep the old PDF. In Edit, re-analyze if needed and set Export status to Not exported, then export again to update the accountant copy.</p>
           )}
           <Label htmlFor="replacement-pdf">New PDF</Label>
           <Input id="replacement-pdf" type="file" accept=".pdf,application/pdf" disabled={replacePdf.isPending}
