@@ -40,6 +40,6 @@ jobs:
           COOLIFY_APPLICATION_UUID: ${{ secrets.COOLIFY_APPLICATION_UUID }}
         run: |
           curl --silent --show-error --fail-with-body \
-            --request GET \
+            --request POST \
             --url "${COOLIFY_API_BASE_URL%/}/deploy?uuid=${COOLIFY_APPLICATION_UUID}" \
             --header "Authorization: Bearer ${COOLIFY_TOKEN}"
