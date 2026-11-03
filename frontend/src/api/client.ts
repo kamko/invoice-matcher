@@ -315,6 +315,7 @@ export function useCopyToGDrive() {
       fetchJson<{
         success: boolean
         copied: number
+        replaced: number
         skipped: number
         total: number
         errors: string[]
