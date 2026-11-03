@@ -698,6 +698,65 @@ def update_invoice(
     return _invoice_to_response(invoice)
 
 
+@router.put("/{invoice_id}/pdf", response_model=InvoiceResponse)
+async def replace_invoice_pdf(
+    invoice_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace the source PDF while preserving invoice metadata and matching."""
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id, Invoice.user_id == user.id,
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not invoice.gdrive_file_id:
+        raise HTTPException(status_code=400, detail="Invoice has no Google Drive PDF to replace")
+    if db.query(Invoice).filter(
+        Invoice.gdrive_file_id == invoice.gdrive_file_id,
+        Invoice.id != invoice.id,
+    ).first():
+        raise HTTPException(status_code=409, detail="This PDF contains multiple invoices and cannot be replaced individually")
+    if not (file.filename or '').lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    content = await file.read()
+    import fitz
+    try:
+        with fitz.open(stream=content, filetype="pdf") as document:
+            if not document.is_pdf or document.is_encrypted or document.page_count == 0:
+                raise ValueError("Invalid PDF")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Select a valid, unencrypted PDF") from exc
+    digest = hashlib.sha256(content).hexdigest()
+    if db.query(Invoice).filter(
+        Invoice.user_id == user.id, Invoice.id != invoice.id,
+        Invoice.content_sha256 == digest,
+    ).first():
+        raise HTTPException(status_code=409, detail="This PDF is already stored as another invoice")
+    service = get_gdrive_service_for_user(db, user)
+    try:
+        service.replace_pdf(invoice.gdrive_file_id, content)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Failed to replace PDF in Google Drive") from exc
+    cache = db.query(PDFCache).filter(
+        PDFCache.gdrive_file_id == invoice.gdrive_file_id,
+        PDFCache.user_id == user.id,
+    ).first()
+    if cache is None:
+        cache = PDFCache(user_id=user.id, gdrive_file_id=invoice.gdrive_file_id)
+        db.add(cache)
+    cache.filename = invoice.filename
+    cache.content = content
+    cache.file_size = len(content)
+    cache.md5_checksum = hashlib.md5(content).hexdigest()
+    cache.cached_at = cache.last_accessed_at = datetime.utcnow()
+    invoice.content_sha256 = digest
+    db.commit()
+    db.refresh(invoice)
+    return _invoice_to_response(invoice)
+
+
 @router.delete("/{invoice_id}")
 def delete_invoice(
     invoice_id: int,

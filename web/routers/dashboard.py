@@ -661,17 +661,22 @@ def copy_to_accountant_folder(
             errors.append(f"{invoice.filename}: failed to resolve {target_folder_name} ({e})")
             continue
 
-        if invoice.filename in existing_files:
-            skipped += 1
-            successful_exports.append(invoice)
-            continue
-
         try:
-            gdrive_service.copy_file(
-                invoice.gdrive_file_id,
-                target_subfolder_id,
-                invoice.filename  # Keep same filename
-            )
+            if invoice.filename in existing_files:
+                # An explicitly reset invoice must refresh the accountant's copy.
+                candidates = [item for item in gdrive_service.list_pdfs(
+                    target_subfolder_id, recursive=False
+                ) if item['name'] == invoice.filename]
+                if len(candidates) != 1:
+                    raise ValueError("Cannot identify a unique existing PDF to replace")
+                content = gdrive_service.download_file(invoice.gdrive_file_id)
+                gdrive_service.replace_pdf(candidates[0]['id'], content)
+            else:
+                gdrive_service.copy_file(
+                    invoice.gdrive_file_id,
+                    target_subfolder_id,
+                    invoice.filename  # Keep same filename
+                )
             copied += 1
             existing_files.add(invoice.filename)
             successful_exports.append(invoice)

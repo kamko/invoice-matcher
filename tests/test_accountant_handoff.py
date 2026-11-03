@@ -201,5 +201,44 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(bad.status, 'matched')
 
 
+    def test_replace_reanalyze_reset_and_reexport_refreshes_accountant_pdf(self):
+        import fitz
+        from fastapi import UploadFile
+        from web.routers.invoices import replace_invoice_pdf, reanalyze_invoice
+        invoice = self.invoice(status='exported')
+        with fitz.open() as document:
+            document.new_page()
+            content = document.tobytes()
+        with patch('web.routers.invoices.get_gdrive_service_for_user', return_value=self.drive):
+            asyncio.run(replace_invoice_pdf(invoice.id, UploadFile(filename='new.pdf', file=io.BytesIO(content)), self.user, self.db))
+        self.assertEqual(invoice.status, 'exported')
+        def parse_new_pdf(path):
+            self.assertEqual(path.read_bytes(), content)
+            return {'vendor': 'Corrected supplier', 'amount': 12}
+        with patch('web.routers.invoices.parse_uploaded_pdf', side_effect=parse_new_pdf):
+            parsed = reanalyze_invoice(invoice.id, self.user, self.db)
+        update_invoice(invoice.id, InvoiceUpdate(vendor=parsed['extracted']['vendor'], exported=False), self.user, self.db)
+        self.assertEqual(invoice.transaction_id, 'one')
+        self.assertEqual(invoice.status, 'matched')
+        self.drive.list_files_in_folder.return_value = [invoice.filename]
+        self.drive.list_pdfs.return_value = [{'id': 'accountant-copy', 'name': invoice.filename}]
+        self.drive.download_file.return_value = content
+        result = self.handoff()
+        self.assertEqual(result['copied'], 1)
+        self.assertEqual(invoice.status, 'exported')
+        self.drive.replace_pdf.assert_called_with('accountant-copy', content)
+        self.drive.copy_file.assert_not_called()
+
+    def test_failed_reexport_keeps_invoice_ready_to_retry(self):
+        invoice = self.invoice()
+        self.drive.list_files_in_folder.return_value = [invoice.filename]
+        self.drive.list_pdfs.return_value = [{'id': 'accountant-copy', 'name': invoice.filename}]
+        self.drive.replace_pdf.side_effect = RuntimeError('offline')
+        result = self.handoff()
+        self.assertEqual(result['copied'], 0)
+        self.assertTrue(result['errors'])
+        self.assertEqual(invoice.status, 'matched')
+
+
 if __name__ == '__main__':
     unittest.main()

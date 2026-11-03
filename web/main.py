@@ -94,7 +94,7 @@ async def security_middleware(request: Request, call_next):
         "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
         "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;",
+        "frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;",
     )
     return response
 
